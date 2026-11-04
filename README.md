@@ -4,25 +4,31 @@
 
 已验证 **DSH Windows 0.2.1-rc.5**。本插件为独立项目，非 DeepSeek 或 OpenAI 官方发行。
 
-## 一行地址安装
+## 一行地址安装（国内 Gitee，免 Git）
 
 在 DSH 左侧打开 **插件 → 添加插件 → 安装第三方插件**，把下面这一行粘贴到“包名或地址”中，然后点击安装：
 
 ```text
-github:NL02040616/dsh-openai-image
+https://gitee.com/un-important/dsh-openai-image/raw/main/local-dsh-openai-image-1.1.0.tgz
 ```
 
-这是一条安装地址，不需要打开终端运行。也可以填入仓库地址：
+这是 `.tgz` 安装包直链，不需要安装 Git、Node.js，也不需要登录 Gitee、打开终端或手动解压。DSH 自带安装器会下载并安装插件。
+
+2026-11-04 已验证：未登录 HTTP 下载成功、文件校验一致；隔离环境中 Git 不可用，仍可使用 DSH 自带 pnpm 安装，全部 10 个运行文件与发布包一致。
+
+已安装 Git 且能够访问 GitHub 的用户，也可使用备用安装地址：
 
 ```text
-https://github.com/NL02040616/dsh-openai-image
+github:NL02040616/dsh-openai-image
 ```
 
 等待安装完成，确认 **OpenAI 生图** 及其组件已启用。看到重启提示时，通过 DSH 顶部 **应用 → 退出** 完整退出后重新打开。
 
 仓库已包含可直接运行的 JavaScript，无需编译，也没有安装或构建脚本。DSH 会下载并管理插件副本，无需手动保存源码目录。
 
-如果之前已经从本地目录安装过这个插件，请先在 DSH 插件页卸载旧副本，再使用上面的地址安装。插件包标识保留为 `@local/dsh-openai-image`，以避免本地版与 GitHub 版重复注册。
+如果之前已经从本地目录或 GitHub 安装过这个插件，请先在 DSH 插件页卸载旧副本，再使用上面的地址安装，并完整退出、重新打开 DSH。插件包标识保留为 `@local/dsh-openai-image`，以避免重复注册。
+
+安装包版本为 **1.1.0**，大小 **11,939 字节**，校验值见 [SHA-256 文件](local-dsh-openai-image-1.1.0.tgz.sha256)。此包不包含任何 API Key。
 
 ## 首次配置
 
@@ -64,7 +70,7 @@ https://github.com/NL02040616/dsh-openai-image
 
 ## 安装和配置
 
-推荐使用上方的 GitHub 地址安装。也可以下载源码 ZIP 并解压，然后在 DSH 插件管理器中填入包含 `package.json` 的目录的完整路径；本地目录安装后不要移动或删除该目录。
+推荐使用上方的 Gitee `.tgz` 直链安装。也可以下载源码 ZIP 并解压，然后在 DSH 插件管理器中填入包含 `package.json` 的目录的完整路径；本地目录安装后不要移动或删除该目录。
 
 安装使用 DSH 原生插件管理机制，不修改程序安装包。插件可在“插件”页面停用或卸载。更新时按 DSH 的提示卸载旧版并重新安装，再完整重启。
 
@@ -78,6 +84,7 @@ Config 字段：`apiKeyEnv`、`defaultModel`、`quality`（low/medium/high）、
 
 - **提示未配置 OPENAI_API_KEY**：按“首次配置”设置默认 `openai` 提供商。这里需要 OpenAI 官方 API Key。
 - **能看到模型但调用失败**：模型列表不代表账号有调用权限或剩余额度；以 OpenAI 的实际报错为准。
+- **提示无法访问 GitHub**：检查粘贴的是否为上方完整的 Gitee `.tgz` 直链。仓库地址与 `.tgz` 地址是两种安装方式；免 Git 安装应使用以 `.tgz` 结尾的地址。
 - **安装失败或版本不兼容**：保留 DSH 插件页的错误信息，检查网络和 DSH 版本。本版未验证其他 DSH 版本，不建议强行绕过版本检查。
 - **改图没有保持某些细节**：明确描述只修改什么、哪些内容保持不变；需要回到旧版本时重新上传该图。
 - **超时**：插件不会自动重试，请先查看 API 用量再决定是否重新发送。
