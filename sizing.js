@@ -37,7 +37,9 @@ export function createSizing() {
     return validate(size, model);
   }
   function fromPrompt(prompt, model) {
-    const pixels = [...prompt.matchAll(/(?<![\d.])(\d{2,6})\s*(?:px|像素)?\s*[xX×*＊]\s*(\d{2,6})(?![\d.])\s*(?:px|像素)?/gi)]
+    // A sentence-ending period is punctuation, not a decimal continuation.
+    // Only a period followed by a digit must prevent a partial number match.
+    const pixels = [...prompt.matchAll(/(?<![\d.])(\d{2,6})\s*(?:px|像素)?\s*[xX×*＊]\s*(\d{2,6})(?!\d|\.\d)\s*(?:px|像素)?/gi)]
       .filter(match => !/^\s*(?:cm|mm|厘米|毫米|英寸)/i.test(prompt.slice(match.index + match[0].length)))
       .map(match => ({ index: match.index, size: `${Number(match[1])}x${Number(match[2])}` }));
     for (const match of prompt.matchAll(/宽(?:度)?\s*[:：为是]?\s*(\d{2,6})\s*(?:px|像素)?[，,\s]*高(?:度)?\s*[:：为是]?\s*(\d{2,6})/gi)) {
@@ -49,7 +51,7 @@ export function createSizing() {
     if (sizes.length > 1) throw new Error('描述包含多个像素尺寸，请只保留目标尺寸，或在画图栏手动指定尺寸。');
     if (sizes.length) return validate(sizes[0], model);
     const ratios = [];
-    for (const match of prompt.matchAll(/(?<![\d.])(\d{1,3}(?:\.\d{1,2})?)\s*[:：/]\s*(\d{1,3}(?:\.\d{1,2})?)(?![\d.])/g)) {
+    for (const match of prompt.matchAll(/(?<![\d.])(\d{1,3}(?:\.\d{1,2})?)\s*[:：/]\s*(\d{1,3}(?:\.\d{1,2})?)(?!\d|\.\d)/g)) {
       if (/^0\d/.test(match[1]) || /^0\d/.test(match[2])) continue;
       const common = /^(?:1:1|3:2|2:3|16:9|9:16|4:3|3:4|4:5|5:4|21:9|9:21|2:1|1:2|3:1|1:3)$/.test(`${match[1]}:${match[2]}`);
       const context = prompt.slice(Math.max(0, match.index - 12), match.index + match[0].length + 12);

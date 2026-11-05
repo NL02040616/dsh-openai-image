@@ -106,10 +106,10 @@ test('visible options use real defaults, snapshot each request and isolate conve
   assert.equal(f.control('model').props.value, MODELS[1].id);
   f.control('model').props.onChange({ target: { value: MODELS[0].id } });
   f.control('quality').props.onChange({ target: { value: 'low' } });
-  f.input.draft = '/draw 16:9 landscape';
+  f.input.draft = '/draw 画面比例16：9.人物要自然';
   assert.ok(JSON.stringify(f.render()).includes('1536 × 864'));
   const attachment = { type: 'image', data: 'dummy' };
-  assert.equal((await claim.submit('16:9 landscape', null, [attachment])).kind, 'success');
+  assert.equal((await claim.submit('画面比例16：9.人物要自然', null, [attachment])).kind, 'success');
   assert.equal(f.calls[0].request.model, MODELS[0].id); assert.equal(f.calls[0].request.quality, 'low'); assert.equal(f.calls[0].request.size, '1536x864');
   assert.equal(f.calls[0].attachments[0], attachment);
   f.control('quality').props.onChange({ target: { value: 'medium' } });

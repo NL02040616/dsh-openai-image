@@ -11,6 +11,8 @@ test('description ratios and explicit pixels determine the actual request for ev
     ['画一个16:9的海报', '1536x864'], ['画幅 9：16', '864x1536'], ['比例 4:5', '896x1120'],
     ['生成 2048 × 1152 像素', '2048x1152'], ['宽1536像素，高864像素', '1536x864'],
     ['参考图1024x1024，最终输出2048x1152', '2048x1152'], ['海报', '1024x1024'],
+    ['画面比例16：9.人物要自然', '1536x864'], ['画幅9:16. Keep the subject centered.', '864x1536'],
+    ['Output 1536x864.', '1536x864'], ['生成2048×1152.背景留白', '2048x1152'],
   ]) {
     assert.equal(commandRequest(prompt, config).size, size);
     await generateImage({ args: { model, prompt }, config,
@@ -21,6 +23,16 @@ test('description ratios and explicit pixels determine the actual request for ev
       },
     });
   }
+});
+
+test('sentence punctuation does not hide dimensions or truncate decimal numbers', () => {
+  for (const punctuation of ['.', '。', '，', ',', '!', '！', ';', '；', '\n']) {
+    assert.equal(sizing.fromPrompt(`画面比例16：9${punctuation}人物要自然`, model), '1536x864');
+    assert.equal(sizing.fromPrompt(`输出1536x864${punctuation}背景留白`, model), '1536x864');
+  }
+  assert.equal(sizing.fromPrompt('比例1.5:1.画面居中', model), '1536x1024');
+  assert.equal(sizing.fromPrompt('比例16:9.123', model), undefined);
+  assert.equal(sizing.fromPrompt('尺寸1536x864.5', model), undefined);
 });
 
 test('invalid pixels, ambiguous dimensions and unsupported Mini ratios fail before billing', async () => {

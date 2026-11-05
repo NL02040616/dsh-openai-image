@@ -1,6 +1,6 @@
 {
   "name": "dsh-openai-image",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "description": "Image creation with status cards, model and size details, version comparison and edit-again actions in DSH conversations.",
