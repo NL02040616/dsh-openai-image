@@ -160,7 +160,9 @@ test('Windows helper reaches a loopback proxy by CONNECT hostname and reports 40
 
 test('Windows helper round-trips UTF-8 request and response with an isolated local server', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
   let body;
+  let receivedHeaders;
   const server = http.createServer(async (request, response) => {
+    receivedHeaders = request.headers;
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     body = Buffer.concat(chunks).toString('utf8');
@@ -171,11 +173,13 @@ test('Windows helper round-trips UTF-8 request and response with an isolated loc
   await once(server, 'listening');
   t.after(() => server.close());
   // Even this local-only test explicitly supplies a private proxy object: no system PAC lookup.
-  const reply = await windowsFetch(`http://127.0.0.1:${server.address().port}/`, options,
+  const reply = await windowsFetch(`http://127.0.0.1:${server.address().port}/`, { ...options, headers: { ...options.headers, 'user-agent': 'dsh-image-integration-test', accept: 'application/json' } },
     { ...config, proxyUrl: `http://127.0.0.1:${server.address().port}` });
   assert.equal(reply.status, 200);
   assert.equal((await reply.json()).text, '已收到图片 café');
   assert.equal(body, options.body);
+  assert.equal(receivedHeaders['user-agent'], 'dsh-image-integration-test');
+  assert.equal(receivedHeaders.accept, 'application/json');
 });
 
 test('Windows helper does not follow redirects and cancellation closes its local connection', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {

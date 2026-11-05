@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-openai-image",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "One-shot image creation, visible references and edit-again actions in DSH conversations.",
@@ -20,14 +20,14 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "core.js", "one-shot.js", "client.js", "transport.js", "windows-request.ps1", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
-  "scripts": { "test": "node --test test/*.test.mjs" },
+  "files": ["index.js", "core.js", "sizing.js", "one-shot.js", "client.js", "transport.js", "windows-request.ps1", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test test/*.test.mjs", "build:client": "node scripts/build-client.mjs", "check:client": "node scripts/build-client.mjs --check" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-model-selection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-attachment"]
+      "inject": ["@deepseek-ai/dsh-client-ui-model-selection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-attachment", "@deepseek-ai/dsh-client-ui-input-trigger", "@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-ui-commands"]
     }
   }
 }

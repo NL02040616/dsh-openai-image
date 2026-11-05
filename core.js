@@ -1,3 +1,5 @@
+import { createSizing } from './sizing.js';
+const sizing = createSizing();
 export const PROVIDER = 'openai-image';
 export const MODELS = Object.freeze([
   { id: 'gpt-image-2.5-flare', name: 'GPT Image 2.5 Flare · 生图', description: '速度优先，适合日常创作和快速迭代；支持参考图编辑与主体保留。' },
@@ -5,7 +7,23 @@ export const MODELS = Object.freeze([
   { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini · 生图', description: 'GPT Image 1 的经济型版本，支持生图和改图；仅支持低输入保真度。官方已标记弃用。' },
 ]);
 export const SIZES = ['1024x1024', '1536x1024', '1024x1536'];
+export const SIZE_PRESETS = sizing.presets;
 export const QUALITIES = ['low', 'medium', 'high'];
+// A command transport envelope, removed before constructing the user message.
+// Ordinary /image text continues to use the configured defaults.
+export const OPTIONS_PREFIX = '@dsh-image-options-v1 ';
+export function commandRequest(rawInput, config) {
+  const text = rawInput.trimStart();
+  if (!text.startsWith(OPTIONS_PREFIX)) return validateRequest({ prompt: rawInput, sizeMode: 'prompt' }, config);
+  let args;
+  try { args = JSON.parse(text.slice(OPTIONS_PREFIX.length)); } catch {
+    throw new ImageGenerationError('无法读取本次画图参数，请重新选择模型、画质和尺寸。', 'INVALID_REQUEST');
+  }
+  if (!args || typeof args !== 'object' || !['model', 'quality', 'size', 'prompt'].every(key => typeof args[key] === 'string')) {
+    throw new ImageGenerationError('本次画图参数不完整，请重新选择模型、画质和尺寸。', 'INVALID_REQUEST');
+  }
+  return validateRequest(args, config);
+}
 const API_ROOT = 'https://api.openai.com/v1/images/';
 const NEW_IMAGE_PREFIX = /^(?:新建图片\s*[:：]\s*|\/new(?:\s+|$))/i;
 
@@ -25,13 +43,13 @@ export function validateRequest(args, defaults) {
   }
   const model = args.model ?? defaults.defaultModel;
   const quality = args.quality ?? defaults.quality;
-  const size = args.size ?? defaults.size;
   if (!MODELS.some(item => item.id === model)) {
     throw new ImageGenerationError(`不支持的生图模型：${model}`, 'UNKNOWN_MODEL');
   }
-  if (!QUALITIES.includes(quality) || !SIZES.includes(size)) {
-    throw new ImageGenerationError('图片画质或尺寸无效。', 'INVALID_REQUEST');
-  }
+  if (!QUALITIES.includes(quality)) throw new ImageGenerationError('图片画质无效。', 'INVALID_REQUEST');
+  let size;
+  try { size = sizing.resolve({ prompt, model, size: args.size ?? defaults.size, sizeMode: args.sizeMode ?? (args.size ? 'manual' : 'prompt') }).size; }
+  catch (error) { throw new ImageGenerationError(error.message, 'INVALID_REQUEST'); }
   return { model, prompt, quality, size, n: 1, output_format: 'png' };
 }
 
@@ -103,7 +121,7 @@ function failureCode(status, apiCode) {
 export async function generateImage({ args, config, references = [], resolveKey, readImage, saveImage, headers = {}, signal, fetchImpl = fetch }) {
   const first = references[0];
   const editSize = first && first.width > first.height ? '1536x1024' : first && first.height > first.width ? '1024x1536' : config.size;
-  const body = validateRequest({ ...args, size: args.size ?? editSize }, config);
+  const body = validateRequest({ ...args, size: args.size ?? editSize, sizeMode: args.sizeMode ?? (args.size ? 'manual' : 'prompt') }, config);
   signal?.throwIfAborted();
   if (references.length > 16) throw new ImageGenerationError('一次最多使用 16 张参考图，请减少本次上传的图片。', 'INVALID_REQUEST');
   if (references.length) {
@@ -175,11 +193,14 @@ export async function generateImage({ args, config, references = [], resolveKey,
     throw new ImageGenerationError('OpenAI 返回的图片不是 PNG 格式。', 'INVALID_RESPONSE');
   }
   const attachment = await saveImage({ data: bytes, mediaType: 'image/png', name: `openai-${Date.now()}.png` });
+  const actualSize = bytes.length >= 24 && bytes.toString('ascii', 12, 16) === 'IHDR'
+    ? `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}` : body.size;
   return {
     operation: references.length ? 'edit' : 'generate',
     referenceCount: references.length,
     model: body.model,
-    size: body.size,
+    size: actualSize,
+    requestedSize: body.size,
     quality: body.quality,
     attachment,
     usage: {

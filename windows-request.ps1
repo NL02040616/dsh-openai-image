@@ -44,6 +44,8 @@ try {
     $request.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
     foreach ($header in $packet.headers.PSObject.Properties) {
         if ($header.Name -ieq 'content-type') { $request.ContentType = [string]$header.Value }
+        elseif ($header.Name -ieq 'user-agent') { $request.UserAgent = [string]$header.Value }
+        elseif ($header.Name -ieq 'accept') { $request.Accept = [string]$header.Value }
         else { $request.Headers[$header.Name] = [string]$header.Value }
     }
     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$packet.body)

@@ -1,5 +1,5 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { PROVIDER, validateRequest } from './core.js';
+import { PROVIDER, commandRequest } from './core.js';
 
 // The marker is durable message metadata; it is never a hidden prompt prefix.
 export function installOneShot(ctx, config) {
@@ -21,6 +21,15 @@ export function installOneShot(ctx, config) {
     const resolved = await next();
     const request = requests.get(event.agent);
     if (!request || request.turn !== event.turn || request.step !== event.step) return resolved;
+    if (!request.preservedSelection) {
+      // Desktop sessions otherwise adopt the last request header as their next
+      // model. Pin the current chat intent before recording the image header.
+      // Use the controller's current value so a concurrent user choice wins.
+      const controller = ctx.get('sessionController')?.agents;
+      const selected = controller?.selectionFor(event.agent).current;
+      if (selected) controller.selectForNextRequest(event.agent, { ...selected });
+      request.preservedSelection = true;
+    }
     // Route this request only. Never change the session's selected chat model.
     const { reasoningEffort, maxTokens, ...rest } = resolved;
     return { ...rest, provider: PROVIDER, model: request.model };
@@ -42,10 +51,10 @@ export function installOneShot(ctx, config) {
         if (attachments.length > 16 || attachments.some(block => !['image/png', 'image/jpeg', 'image/webp'].includes(block.attachment.mediaType))) {
           return { kind: 'error', text: '请使用不超过 16 张 PNG、JPEG 或 WebP 参考图。' };
         }
-        const request = validateRequest({ prompt: rawInput }, config);
+        const request = commandRequest(rawInput, config);
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: request.prompt }, ...attachments],
-          source: { kind: 'user', openaiImage: { version: 1, model: request.model } },
+          source: { kind: 'user', openaiImage: { version: 1, model: request.model, quality: request.quality, size: request.size } },
         }));
         return { kind: 'success' };
       },

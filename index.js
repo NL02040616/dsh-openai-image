@@ -3,7 +3,7 @@ import z from '@deepseek-ai/schemastery';
 import { LlmAdapter, LlmError, attributionHeaders, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZES, generateImage, isTitleRequest, referenceImages, requestFromMessages, textChunks } from './core.js';
+import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZE_PRESETS, generateImage, isTitleRequest, referenceImages, requestFromMessages, textChunks } from './core.js';
 import { installOneShot } from './one-shot.js';
 import { createImageFetch } from './transport.js';
 
@@ -13,7 +13,7 @@ export const Config = z.object({
   apiKeyEnv: z.string().default('OPENAI_API_KEY'),
   defaultModel: z.union(MODELS.map(model => z.const(model.id))).default('gpt-image-2.5-flare'),
   quality: z.union(QUALITIES.map(value => z.const(value))).default('medium'),
-  size: z.union(SIZES.map(value => z.const(value))).default('1024x1024'),
+  size: z.string().default('1024x1024').description('默认像素尺寸，例如 1024x1024。GPT Image 2.5 支持符合模型限制的自定义尺寸。'),
   timeoutMs: z.number().step(1).min(1000).max(600000).default(300000),
   networkMode: z.union(['auto', 'system', 'host'].map(value => z.const(value))).default('auto').description('网络：auto 保留 DSH 代理环境变量，否则在 Windows 跟随系统代理/PAC；system 强制跟随 Windows；host 沿用 DSH。'),
   proxyUrl: z.string().default('').description('可选：仅本插件使用的 http://主机:端口。使用公司 PAC 时留空，不填脚本地址、账号或密码。'),
@@ -22,6 +22,15 @@ export const Config = z.object({
 
 export function apply(ctx, config) {
   installOneShot(ctx, config);
+  ctx.inject(['connection'], scope => {
+    // Publish only the non-secret choices. Never expose the full plugin config.
+    // Connection's exact /api routes enforce authenticated owner access on both
+    // the desktop carrier and the web server.
+    scope.connection.fetch.register({
+      path: '/api/openai-image.options', methods: ['GET'], requestBody: 'buffered',
+      fetch: () => Response.json({ models: MODELS, qualities: QUALITIES, sizes: SIZE_PRESETS, defaults: { model: config.defaultModel, quality: config.quality, size: config.size, sizeMode: 'prompt' } }, { headers: { 'cache-control': 'no-store' } }),
+    });
+  });
   const fetchImpl = createImageFetch(config);
   const ref = credentialRef(config.apiKeyEnv);
   const lifetime = new AbortController();
@@ -83,6 +92,8 @@ export function apply(ctx, config) {
         return;
       }
       const { prompt, references } = requestFromMessages(options.messages);
+      const selection = options.messages[latestUser]?.source?.openaiImage;
+      const parameters = selection?.version === 1 ? { quality: selection.quality, size: selection.size } : {};
       const toolName = references.length ? 'openai_edit_image' : 'openai_generate_image';
       if (!options.tools?.some(tool => tool.name === toolName)) {
         throw new LlmError('当前对话未开放画图工具。请在普通对话中使用，并允许 OpenAI 生图工具。', 'INVALID_REQUEST');
@@ -90,7 +101,7 @@ export function apply(ctx, config) {
       // Use native tool results: chat adapters accept their images as history.
       yield { type: 'block-end', index: 0, block: {
         type: 'tool-call', id: `openai_image_${randomUUID().replaceAll('-', '')}`,
-        name: toolName, arguments: JSON.stringify({ prompt, model: options.model }),
+        name: toolName, arguments: JSON.stringify({ prompt, model: options.model, ...parameters }),
       } };
       yield { type: 'finish', reason: { kind: 'tool-calls' } };
     }
@@ -100,13 +111,13 @@ export function apply(ctx, config) {
   const parameters = {
     prompt: { type: 'string', required: true, description: 'Complete description of the desired image, including style and any exact text.' },
     model: { type: 'string', enum: MODELS.map(item => item.id), description: 'Optional image model; defaults to GPT Image 2.5 Flare.' },
-    size: { type: 'string', enum: SIZES, description: 'Optional dimensions. New images default to 1024x1024; edits follow the first reference orientation. 1536x1024 is landscape; 1024x1536 is portrait.' },
+    size: { type: 'string', description: 'Explicit output WIDTHxHEIGHT pixels. GPT Image 2.5: multiples of 16, max edge 3840, aspect 1:3–3:1, 655360–8294400 pixels. Example 1536x864 for 16:9. Mini supports only 1024x1024, 1536x1024, 1024x1536. Omit to detect the requested dimensions or aspect ratio from the prompt. Never silently approximate unsupported sizes.' },
     quality: { type: 'string', enum: QUALITIES, description: 'Optional quality. Default medium. Use low for previews or high when requested.' },
   };
   const output = {
     schema: { type: 'json' },
     render: (_args, value) => [
-      { type: 'text', text: `图片已${value.operation === 'edit' ? `编辑（参考 ${value.referenceCount} 张）` : '生成'}：${value.model}，${value.size}，${value.quality}。图片已保存为对话附件。` },
+      { type: 'text', text: `图片已${value.operation === 'edit' ? `编辑（参考 ${value.referenceCount} 张）` : '生成'}：${value.model}，实际 ${value.size}，${value.quality}。图片已保存为对话附件。${value.requestedSize && value.size !== value.requestedSize ? ` 请求尺寸为 ${value.requestedSize}，接口返回尺寸与请求不同；为避免重复扣费，没有自动重试。` : ''}` },
       { type: 'image', attachment: value.attachment },
     ],
   };

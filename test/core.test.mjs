@@ -1,10 +1,39 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { generateImage, isTitleRequest, promptFromMessages, referenceImages, requestFromMessages, validateRequest } from '../core.js';
+import { commandRequest, OPTIONS_PREFIX, generateImage, isTitleRequest, promptFromMessages, referenceImages, requestFromMessages, validateRequest } from '../core.js';
 
 const config = { apiKeyEnv: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2.5-flare', quality: 'medium', size: '1024x1024', timeoutMs: 1000 };
 const png = Buffer.from('89504e470d0a1a0a0000000049454e44ae426082', 'hex');
 const response = () => ({ ok: true, status: 200, json: async () => ({ data: [{ b64_json: png.toString('base64') }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } }) });
+
+test('per-image selections are explicit, validated, and keep prompt text separate', () => {
+  const selected = { model: 'gpt-image-1-mini', quality: 'low', size: '1024x1536', prompt: '画出文字 "high"\n新建图片：雪山' };
+  assert.deepEqual(commandRequest(OPTIONS_PREFIX + JSON.stringify(selected), config), { ...selected, n: 1, output_format: 'png' });
+  assert.equal(commandRequest('plain prompt', config).model, config.defaultModel);
+  for (const bad of [null, {}, { ...selected, model: 'unknown' }, { ...selected, quality: 'auto' }, { ...selected, size: undefined }]) {
+    assert.throws(() => commandRequest(OPTIONS_PREFIX + JSON.stringify(bad), config));
+  }
+  assert.throws(() => commandRequest(OPTIONS_PREFIX + '{', config));
+});
+
+test('the displayed size and quality also apply to edits with a differently oriented reference', async () => {
+  const selected = { model: 'gpt-image-1-mini', quality: 'low', size: '1024x1536', prompt: 'make a portrait poster' };
+  let calls = 0;
+  const result = await generateImage({
+    args: commandRequest(OPTIONS_PREFIX + JSON.stringify(selected), config), config,
+    references: [{ attachmentId: 'landscape', mediaType: 'image/png', width: 1536, height: 1024 }],
+    readImage: async () => ({ data: png }), resolveKey: async () => 'dummy-key', saveImage: async () => ({ attachmentId: 'output' }),
+    fetchImpl: async (url, init) => {
+      calls++;
+      const body = JSON.parse(init.body);
+      assert.ok(url.endsWith('/edits'));
+      for (const key of ['model', 'quality', 'size', 'prompt']) assert.equal(body[key], selected[key]);
+      return response();
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.size, selected.size);
+});
 
 test('one-shot creation ignores old pictures and editing uses only visible attached references', () => {
   const old = { attachmentId: 'old', mediaType: 'image/png' };
