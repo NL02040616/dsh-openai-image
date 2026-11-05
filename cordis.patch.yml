@@ -7,3 +7,6 @@
         quality: medium
         size: 1024x1024
         timeoutMs: 300000
+        networkMode: auto
+        proxyUrl: ''
+        proxyUseDefaultCredentials: false

@@ -4,6 +4,8 @@
 
 已验证 **DSH Windows 0.2.1-rc.5**。本插件为独立项目，非 DeepSeek 或 OpenAI 官方发行。
 
+**本地待发布版本：1.2.1。** 新增 Windows 系统代理/PAC 支持；当前公开直链仍为 1.2.0，尚不含此修复。发布 1.2.1 前不要把下方旧链接当作代理修复包。
+
 ## 一行地址安装（国内 Gitee，免 Git）
 
 在 DSH 左侧打开 **插件 → 添加插件 → 安装第三方插件**，把下面这一行粘贴到“包名或地址”中，然后点击安装：
@@ -86,11 +88,39 @@ github:NL02040616/dsh-openai-image
 
 安装使用 DSH 原生插件管理机制，不修改程序安装包。插件可在“插件”页面停用或卸载。更新时按 DSH 的提示卸载旧版并重新安装，再完整重启。
 
-Config 字段：`apiKeyEnv`、`defaultModel`、`quality`（low/medium/high）、`size`（1024x1024/1536x1024/1024x1536）、`timeoutMs`。这些字段的默认值见 `cordis.patch.yml`。
+Config 字段：`apiKeyEnv`、`defaultModel`、`quality`（low/medium/high）、`size`（1024x1024/1536x1024/1024x1536）、`timeoutMs`，以及下方的网络配置。这些字段的默认值见 `cordis.patch.yml`。
 
 本插件不带安装脚本或额外运行时依赖。`peerDependencies` 显式声明需要复用的 DSH 运行时包，这是本地链接安装时解析这些包所必需的。图标为本插件原创 SVG，随代码按 MIT 许可提供。
 
 修改插件 JavaScript 后，正常退出并重新打开 DSH 以加载新模块。首次加载失败的模块也需要重启后重新加载，单独切换启用开关不会清除 Node 的模块缓存。
+
+### 公司代理脚本 / Windows 系统代理（1.2.1）
+
+DSH 0.2.1-rc.5 的后台只从环境变量读取代理，不自动读取 Windows 的 PAC。浏览器能联网，不代表后台生图请求也能联网。插件为 Windows 增加单独的系统网络通道，生图和参考图编辑共用它。
+
+在插件详情的组件配置中：
+
+| 字段 | 作用 |
+| --- | --- |
+| `networkMode: auto`（默认） | 已设置 DSH 代理环境变量时保留原通道及 `NO_PROXY` 规则；否则 Windows 使用系统代理/PAC，其他系统继续使用 DSH 通道。 |
+| `networkMode: system` | 强制使用 Windows 当前用户的系统代理、自动配置脚本和绕过规则。公司使用 PAC 时推荐此项。 |
+| `networkMode: host` | 使用原来的 DSH 请求通道，适合已经配置好 DSH 代理的用户。 |
+| `proxyUrl`（默认空） | 可选的手动 HTTP 代理地址，例如 `http://127.0.0.1:7890`，仅影响本插件，并优先于 `networkMode`。只填 IT 提供的实际代理主机和端口，不填 PAC 脚本 URL、账号或密码。 |
+| `proxyUseDefaultCredentials: false` | 默认不向代理提供 Windows 身份。仅在 IT 要求集成认证时设为 `true`，使用当前 Windows 账号认证所选代理；不把该账号作为 OpenAI 登录凭据。 |
+
+**你使用公司 PAC 时：先确认 Windows 的代理设置中已有公司脚本，再设置 `networkMode` 为 `system`、`proxyUrl` 留空，保存并完整重启 DSH。** 不需要从 PAC 中挑出并写死某一个公司内网 IP。如果脚本只存在于浏览器扩展内，Windows 无法读取它，需要由 IT 配置 Windows 系统代理或提供实际 HTTP 代理地址。
+
+实现通过 Windows 自带 PowerShell 5.1 / .NET Framework 读取系统代理，并在隐藏的临时子进程中发送请求。使用系统证书验证；不改注册表、系统代理、环境变量或 DSH 全局 dispatcher，不关闭证书检查。公司策略禁止 PowerShell 时会明确报错；可选 `host` 并由 IT 配置 DSH 代理，不绕过公司策略。密钥和图片通过进程输入管道传递，不放进命令行或临时文件。
+
+PAC 为目标返回 `DIRECT` 时按该规则直连；选定代理连接失败时不会自动改为直连或重发图片 POST，也不会跟随登录页重定向。PAC 解析由 Windows 实现，插件不下载并自行执行公司脚本。
+
+- **407**：代理认证要求，按公司 IT 的要求处理。
+- **建立隧道时 403**：代理拒绝转发，需要 IT 确认是否允许 `api.openai.com:443`。这不等于 API Key 错误。
+- **证书错误**：联系 IT 确认公司根证书配置，不关闭 TLS 校验。
+- **401 API 响应**：检查 OpenAI API Key；**429** 则进一步区分额度不足和速率限制。
+- **超时或连接失败**：检查公司网络、VPN、PAC 可用性及目标访问权限；不要用反复发送收费请求来探测网络。
+
+系统代理读取行为参见 [Microsoft GetSystemWebProxy 文档](https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest.getsystemwebproxy)。本机仅做隔离模拟和 loopback 代理验证，没有改动现有 Windows 代理来测试真实公司 PAC，最终连通性取决于公司网络规则。
 
 ## 常见问题
 
@@ -106,7 +136,9 @@ Config 字段：`apiKeyEnv`、`defaultModel`、`quality`（low/medium/high）、
 仅修改或开发插件时才需要 Node.js。核心测试使用模拟 HTTP，不需要密钥，不消耗 API 额度：
 
 ```sh
-node --test test/core.test.mjs
+node --test test/*.test.mjs
 ```
+
+网络测试只使用假密钥、独立子进程、`127.0.0.1` 临时监听端口和每次请求独立的代理对象，不访问 OpenAI、不读取或修改机器现有代理。非 Windows 系统跳过 Windows 原生通道测试。
 
 DSH 运行时依赖由宿主提供；普通用户无需在此仓库执行依赖安装。许可证见 [LICENSE](LICENSE)。

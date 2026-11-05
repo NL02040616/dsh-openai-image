@@ -150,7 +150,7 @@ export async function generateImage({ args, config, references = [], resolveKey,
     try {
       payload = await response.json();
     } catch {
-      throw new ImageGenerationError(`OpenAI 返回了无法解析的响应（HTTP ${response.status}）。请稍后手动重试。`, 'TRANSPORT', response.status);
+      throw new ImageGenerationError(`图片接口或代理返回了无法解析的响应（HTTP ${response.status}）。请检查是否出现公司网络认证或拦截页面；没有自动重试。`, 'TRANSPORT', response.status);
     }
     if (!response.ok) {
       const code = failureCode(response.status, payload?.error?.code);

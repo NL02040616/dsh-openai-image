@@ -5,6 +5,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZES, generateImage, isTitleRequest, referenceImages, requestFromMessages, textChunks } from './core.js';
 import { installOneShot } from './one-shot.js';
+import { createImageFetch } from './transport.js';
 
 export const name = 'local-openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
@@ -14,10 +15,14 @@ export const Config = z.object({
   quality: z.union(QUALITIES.map(value => z.const(value))).default('medium'),
   size: z.union(SIZES.map(value => z.const(value))).default('1024x1024'),
   timeoutMs: z.number().step(1).min(1000).max(600000).default(300000),
+  networkMode: z.union(['auto', 'system', 'host'].map(value => z.const(value))).default('auto').description('网络：auto 保留 DSH 代理环境变量，否则在 Windows 跟随系统代理/PAC；system 强制跟随 Windows；host 沿用 DSH。'),
+  proxyUrl: z.string().default('').description('可选：仅本插件使用的 http://主机:端口。使用公司 PAC 时留空，不填脚本地址、账号或密码。'),
+  proxyUseDefaultCredentials: z.boolean().default(false).description('仅当公司 IT 要求时启用：使用当前 Windows 账号认证代理。不会用该账号登录 OpenAI。'),
 });
 
 export function apply(ctx, config) {
   installOneShot(ctx, config);
+  const fetchImpl = createImageFetch(config);
   const ref = credentialRef(config.apiKeyEnv);
   const lifetime = new AbortController();
   const isImageCall = exec => exec.callId?.startsWith('openai_image_') && exec.agent?.session.requestHeader()?.config.provider === PROVIDER;
@@ -30,7 +35,7 @@ export function apply(ctx, config) {
   const generate = async (args, signal, references = []) => {
     try {
       return await generateImage({
-        args, config, references,
+        args, config, references, fetchImpl,
         signal: signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal,
         resolveKey: async () => (await ctx.credentials.resolve(ref))?.value,
         saveImage: input => ctx.attachments.saveImage(input),
