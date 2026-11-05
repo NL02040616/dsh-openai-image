@@ -77,6 +77,10 @@ export function referenceImages(messages) {
 
 export function requestFromMessages(messages) {
   const prompt = promptFromMessages(messages);
+  const current = messages.findLast(item => item.role === 'user' && item.source?.kind === 'user');
+  if (current?.source.openaiImage?.version === 1) {
+    return { prompt, references: current.content.filter(block => block.type === 'image').map(block => block.attachment) };
+  }
   return {
     prompt: prompt.replace(NEW_IMAGE_PREFIX, ''),
     references: NEW_IMAGE_PREFIX.test(prompt) ? [] : referenceImages(messages),
