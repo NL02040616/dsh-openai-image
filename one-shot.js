@@ -4,6 +4,17 @@ import { PROVIDER, commandRequest } from './core.js';
 // The marker is durable message metadata; it is never a hidden prompt prefix.
 export function installOneShot(ctx, config) {
   const requests = new WeakMap();
+  const selections = new WeakMap();
+  const restoreSelection = agent => {
+    const saved = selections.get(agent);
+    if (!saved) return;
+    selections.delete(agent);
+    const current = agent.model.current();
+    if (current?.provider === PROVIDER && current.model === saved.imageModel) agent.model.select(saved.previous);
+  };
+  ctx.on('agent/turn-stopping', async ({ agent }) => restoreSelection(agent));
+  // Preparation failures and cancellation can bypass turn-stopping.
+  ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') restoreSelection(agent); });
   ctx.on('agent/pre-step', async (event, next) => {
     const decision = await next();
     const previous = requests.get(event.agent);
@@ -21,6 +32,9 @@ export function installOneShot(ctx, config) {
     const resolved = await next();
     const request = requests.get(event.agent);
     if (!request || request.turn !== event.turn || request.step !== event.step) return resolved;
+    // 0.2.2 fixes the route before prompt/tool preparation. The command selects
+    // it before followup; changing it in agent/request is now explicitly illegal.
+    if (event.agent.model?.select) return resolved;
     if (!request.preservedSelection) {
       // Desktop sessions otherwise adopt the last request header as their next
       // model. Pin the current chat intent before recording the image header.
@@ -52,6 +66,12 @@ export function installOneShot(ctx, config) {
           return { kind: 'error', text: '请使用不超过 16 张 PNG、JPEG 或 WebP 参考图。' };
         }
         const request = commandRequest(rawInput, config);
+        if (agent.model?.select) {
+          const previous = agent.model.current();
+          if (!previous) return { kind: 'error', text: '请先选择聊天模型，再开始画图。' };
+          selections.set(agent, { previous, imageModel: request.model });
+          agent.model.select({ provider: PROVIDER, model: request.model });
+        }
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: request.prompt }, ...attachments],
           source: { kind: 'user', openaiImage: { version: 1, model: request.model, quality: request.quality, size: request.size } },
