@@ -8,7 +8,7 @@ const code = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 function fixture(saved = new Map()) {
   const config = { defaultModel: MODELS[1].id, quality: 'high', size: '1024x1536' };
   let source, resolveOptions;
-  const calls = [], slots = new Map(), events = new Map(), disposers = [];
+  const calls = [], slots = new Map(), events = new Map(), disposers = [], definitions = new Map(), registrations = new Map();
   let states = [], cursor = 0;
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
@@ -18,7 +18,13 @@ function fixture(saved = new Map()) {
   const ctx = {
     locale: { register: () => {}, bind: () => key => key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
     effect: callback => { disposers.push(callback()); }, on: (name, callback) => events.set(name, callback),
-    slots: { inject: (_name, callback) => callback(), register: (meta, component) => slots.set(meta.name, component) },
+    slots: { inject: (_name, callback) => callback(), register: (meta, component) => {
+      // DSH's read-image-toolview already owns this declaration. Re-declaring
+      // it prevents cold boot, even when the requested spec is identical.
+      assert.ok(!meta.children?.['tool.call.images'], 'must not redeclare the native image slot');
+      slots.set(meta.name, component); registrations.set(meta.key ?? meta.name, { meta, component });
+    } },
+    uiConversation: { events: { register: definition => definitions.set(definition.kind, definition) } },
     conversation: { resolveDraftAttachments: () => [] },
     inputTriggers: { registerSource: value => { source = value; return () => {}; } },
     remote: { commands: { execute: async (id, line, attachments) => { calls.push({ id, request: commandRequest(line.slice(7), config), attachments }); return { ok: true, value: { result: { kind: 'success' } } }; } } },
@@ -45,8 +51,33 @@ function fixture(saved = new Map()) {
   const render = () => { cursor = 0; return slots.get('conversation.input.dock')(props); };
   const all = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(all)];
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
-  return { calls, finish, input, props, render, control, source, saved, events, config };
+  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations };
 }
+
+test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {
+  const f = fixture();
+  const definition = f.definitions.get('openai-image-result');
+  const attachment = { attachmentId: 'sha256:test', mediaType: 'image/png', width: 1024, height: 1536 };
+  const event = { type: 'tool/result', surfaceOp: 'append', seq: 12, data: { message: {
+    source: { callId: 'openai_image_test' }, content: [{ type: 'text', text: '图片已生成：test' }, { type: 'image', attachment }],
+  } } };
+  const match = definition.match['tool/result'](event);
+  assert.equal(match.role, 'start');
+  const context = { key: 'image:test', id: match.id, start: { event, location: { kind: 'step' } } };
+  context.state = definition.start(context, { event });
+  const node = definition.buildViewNode(context);
+  assert.equal(node.groupTree, 'turn');
+  assert.equal(node.data, event.data.message);
+  const view = f.registrations.get('openai_generate_image');
+  const loadImage = () => {};
+  const tree = view.component({ block: node.data, phase: 'result', loadImage,
+    renderFactorySlot: () => {} });
+  const gallery = tree.children.find(child => typeof child.type === 'function');
+  assert.equal(gallery.props.images[0].attachment, attachment);
+  assert.equal(gallery.props.loadImage, loadImage);
+  assert.ok(!tree.children.some(child => child.type === 'pre'));
+  assert.equal(definition.match['tool/result']({ ...event, data: { message: { ...event.data.message, isError: true } } }), null);
+});
 
 test('visible options use real defaults, snapshot each request and isolate conversations', async () => {
   const f = fixture();

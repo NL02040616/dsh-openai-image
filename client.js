@@ -118,7 +118,7 @@ window.__ModuleLoader__.load({
       },
     };
     return {
-      inject: ['slots', 'locale', 'conversation', 'connection', 'inputTriggers', 'remote', 'remote.commands'],
+      inject: ['slots', 'locale', 'conversation', 'uiConversation', 'connection', 'inputTriggers', 'remote', 'remote.commands'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register('openai-image', descriptions));
         const t = ctx.locale.bind('openai-image');
@@ -328,6 +328,46 @@ window.__ModuleLoader__.load({
                 image.attachment && h('button', { type: 'button', style: buttonStyle, title: t('editTip'), disabled: running || !editable(input) || pending !== null, onClick: () => edit(image) }, pending === image.attachment.attachmentId ? t('loading') : t('edit'))))),
             error && h('div', { role: 'alert', style: { fontSize: 12, marginTop: 6 } }, error));
         }
+        // 0.2.2's generic tool card flattens unknown blocks to JSON. Register a
+        // keyed view so persisted native image blocks use the authorized gallery.
+        function ImageToolResult(props) {
+          const { block, phase } = props;
+          useCopy();
+          const content = Array.isArray(block?.content) ? block.content : [];
+          const text = content.filter(part => part.type === 'text').map(part => part.text).join('\n');
+          const images = block?.isError ? [] : content.filter(part => part.type === 'image' && part.attachment).map(part => ({ attachment: part.attachment }));
+          return h('section', { 'aria-label': t('once'), style: { padding: '8px 0', maxWidth: '100%' } },
+            h('div', { role: block?.isError ? 'alert' : 'status', style: { whiteSpace: 'pre-wrap', fontSize: 12, marginBottom: images.length ? 8 : 0 } }, text || t(phase === 'result' ? 'failed' : 'loading')),
+            images.length > 0 && h(EditableImages, { ...props, images, align: 'left' }));
+        }
+        for (const key of ['openai_generate_image', 'openai_edit_image']) {
+          ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+            name: 'tool.call.toolview', key,
+          }, ImageToolResult));
+        }
+        const imageResultKind = 'openai-image-result';
+        ctx.uiConversation.events.register({
+          kind: imageResultKind, target: 'chat',
+          match: { 'tool/result': event => {
+            const message = event.data?.message;
+            if (event.surfaceOp !== 'append' || message?.isError || !message?.content?.some(part => part.type === 'image' && part.attachment)
+              || !message.content.some(part => part.type === 'text' && /^图片已(?:生成|编辑)/.test(part.text))) return null;
+            return { id: String(message.source.callId), role: 'start' };
+          } },
+          start: (_context, match) => ({ block: match.event.data.message, seq: match.event.seq }),
+          update: (context, match) => ({ block: match.event.data.message, seq: match.event.seq }),
+          publication: () => 'immediate',
+          buildViewNode: context => {
+            const state = context.state;
+            if (!state) return null;
+            return { key: context.key, kind: imageResultKind, id: context.id, target: 'chat', anchorSeq: state.seq,
+              location: context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' },
+              visibility: 'visible', groupTree: 'turn', data: state.block };
+          },
+        });
+        ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+          name: 'conversation.chat.node', key: imageResultKind,
+        }, props => h(ImageToolResult, { ...props, phase: 'result', block: props.node.data })));
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({ name: 'conversation.input.left', id: 'openai-image-draw', order: 30 }, DrawButton));
         ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'openai-image-references', order: 30 }, ReferenceDock));
         for (const name of ['conversation.chat.message.images', 'conversation.chat.user.images', 'tool.call.images']) {
