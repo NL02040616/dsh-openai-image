@@ -7,7 +7,7 @@ import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZE_PRESETS, genera
 import { installOneShot } from './one-shot.js';
 import { createImageFetch } from './transport.js';
 
-export const name = 'local-openai-image';
+export const name = 'openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
 export const Config = z.object({
   apiKeyEnv: z.string().default('OPENAI_API_KEY'),

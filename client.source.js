@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-openai-image',
+  id: 'dsh-openai-image',
   factory(require) {
     const React = require('react');
     /* SHARED_IMAGE_SIZING */
