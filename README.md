@@ -4,14 +4,14 @@
 
 已验证 **DSH Windows 0.2.1-rc.5**。本插件为独立项目，非 DeepSeek 或 OpenAI 官方发行。
 
-**本地待发布版本：1.2.1。** 新增 Windows 系统代理/PAC 支持；当前公开直链仍为 1.2.0，尚不含此修复。发布 1.2.1 前不要把下方旧链接当作代理修复包。
+**当前版本：1.2.1。** 新增 Windows 系统代理/PAC 支持，生图和参考图编辑共用代理通道；保留一次性画图、可见参考图和继续修改入口。
 
 ## 一行地址安装（国内 Gitee，免 Git）
 
 在 DSH 左侧打开 **插件 → 添加插件 → 安装第三方插件**，把下面这一行粘贴到“包名或地址”中，然后点击安装：
 
 ```text
-https://gitee.com/un-important/dsh-openai-image/raw/main/local-dsh-openai-image-1.2.0.tgz
+https://gitee.com/un-important/dsh-openai-image/raw/main/local-dsh-openai-image-1.2.1.tgz
 ```
 
 不需要安装 Git、Node.js，也不需要登录 Gitee、打开终端或手动解压。DSH 会下载并管理插件副本。
@@ -26,7 +26,7 @@ github:NL02040616/dsh-openai-image
 
 仓库已包含可直接运行的 JavaScript，无需编译，也没有安装或构建脚本。DSH 会下载并管理插件副本，无需手动保存源码目录。
 
-从旧版升级：先在 DSH 插件页卸载旧副本，再安装上述 **1.2.0** 地址，随后通过 **应用 → 退出** 完整退出并重开 DSH。插件包标识仍为 `@local/dsh-openai-image`，避免重复注册。卸载插件不会删除对话图片；API Key 由 DSH 单独管理。
+从旧版升级：先在 DSH 插件页卸载旧副本，再安装上述 **1.2.1** 地址，随后通过 **应用 → 退出** 完整退出并重开 DSH。插件包标识仍为 `@local/dsh-openai-image`，避免重复注册。卸载插件不会删除对话图片；API Key 由 DSH 单独管理。
 
 ## 首次配置
 
