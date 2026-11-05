@@ -10,10 +10,13 @@ function fixture(saved = new Map()) {
   let source, resolveOptions;
   const calls = [], slots = new Map(), events = new Map(), disposers = [], definitions = new Map(), registrations = new Map();
   let states = [], cursor = 0;
+  const drafts = new Map();
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
     Fragment: 'fragment', useSyncExternalStore: (_listen, read) => read(),
     useState: init => { const i = cursor++; if (!(i in states)) states[i] = init; return [states[i], value => { states[i] = value; }]; },
+    useRef: init => { const i = cursor++; if (!(i in states)) states[i] = { current: init }; return states[i]; },
+    useEffect: callback => { callback(); },
   };
   const ctx = {
     locale: { register: () => {}, bind: () => key => key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
@@ -25,7 +28,11 @@ function fixture(saved = new Map()) {
       slots.set(meta.name, component); registrations.set(meta.key ?? meta.name, { meta, component });
     } },
     uiConversation: { events: { register: definition => definitions.set(definition.kind, definition) } },
-    conversation: { resolveDraftAttachments: () => [] },
+    conversation: {
+      resolveDraftAttachments: ids => ids.map(id => drafts.get(id)).filter(Boolean),
+      createDrafts: (_id, files) => files.map(file => { const draft = { id: `draft-${drafts.size}`, kind: 'image', file }; drafts.set(draft.id, draft); return draft; }),
+      releaseDraftAttachment: id => drafts.delete(id), releaseDraftAttachments: items => items.forEach(item => drafts.delete(item.id)),
+    },
     inputTriggers: { registerSource: value => { source = value; return () => {}; } },
     remote: { commands: { execute: async (id, line, attachments) => { calls.push({ id, request: commandRequest(line.slice(7), config), attachments }); return { ok: true, value: { result: { kind: 'success' } } }; } } },
   };
@@ -41,17 +48,25 @@ function fixture(saved = new Map()) {
       plugin.apply(scoped);
     } } },
     localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
-    AbortSignal,
-    fetch: async url => { assert.equal(url, 'api/openai-image.options'); return { ok: true, json: () => new Promise(resolve => { resolveOptions = resolve; }) }; },
+    AbortSignal, File,
+    fetch: async url => {
+      if (url.startsWith('fixture-image:')) return { ok: true, blob: async () => new Blob([url]) };
+      assert.equal(url, 'api/openai-image.options'); return { ok: true, json: () => new Promise(resolve => { resolveOptions = resolve; }) };
+    },
   });
   const finish = async () => { await new Promise(resolve => setImmediate(resolve)); resolveOptions({ models: MODELS, qualities: QUALITIES, sizes: SIZE_PRESETS,
     defaults: { model: config.defaultModel, quality: config.quality, size: config.size, sizeMode: 'prompt' } }); await new Promise(resolve => setImmediate(resolve)); };
   const input = { draft: '/draw a landscape', draftRev: 1, phase: 'plain', attachmentIds: [], occurrences: [] };
-  const props = { sessionId: 'one', useInput: read => read(input), useSession: read => read({ running: false }), inputActions: { setDraft: draft => { input.draft = draft.text; input.occurrences = draft.references; } } };
+  const props = { sessionId: 'one', useInput: read => read(input), useSession: read => read({ running: false }), inputActions: {
+    setDraft: draft => { input.draft = draft.text; input.occurrences = draft.references; },
+    addAttachments: ids => { input.attachmentIds = [...input.attachmentIds, ...ids]; return true; },
+    removeAttachment: id => { input.attachmentIds = input.attachmentIds.filter(item => item !== id); },
+  } };
   const render = () => { cursor = 0; return slots.get('conversation.input.dock')(props); };
   const all = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(all)];
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
-  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations };
+  const renderComponent = (component, componentProps, fresh = false) => { if (fresh) states = []; cursor = 0; return component(componentProps); };
+  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts };
 }
 
 test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {
@@ -67,16 +82,20 @@ test('persisted image results render as an authorized gallery outside collapsed 
   context.state = definition.start(context, { event });
   const node = definition.buildViewNode(context);
   assert.equal(node.groupTree, 'turn');
-  assert.equal(node.data, event.data.message);
+  assert.equal(node.data.block, event.data.message);
   const view = f.registrations.get('openai_generate_image');
   const loadImage = () => {};
-  const tree = view.component({ block: node.data, phase: 'result', loadImage,
+  const tree = view.component({ block: node.data.block, phase: 'result', loadImage,
     renderFactorySlot: () => {} });
   const gallery = tree.children.find(child => typeof child.type === 'function');
   assert.equal(gallery.props.images[0].attachment, attachment);
   assert.equal(gallery.props.loadImage, loadImage);
   assert.ok(!tree.children.some(child => child.type === 'pre'));
-  assert.equal(definition.match['tool/result']({ ...event, data: { message: { ...event.data.message, isError: true } } }), null);
+  const failedEvent = { ...event, data: { message: { ...event.data.message, isError: true } } };
+  const failedState = definition.start(context, { event: failedEvent });
+  assert.equal(failedState.status, 'failed');
+  const failedView = view.component({ block: failedEvent.data.message, phase: 'result' });
+  assert.ok(!failedView.children.some(child => typeof child.type === 'function'));
 });
 
 test('visible options use real defaults, snapshot each request and isolate conversations', async () => {
@@ -111,4 +130,39 @@ test('bad sizes, load errors and command refusal never silently select a fallbac
   assert.equal(f.control('model').props.disabled, true);
   f.events.get('connection/reset')();
   assert.equal((await claim.submit('another')).kind, 'error'); assert.equal(f.calls.length, 1);
+});
+
+test('version comparison selects an old image and edit loads exactly that image without submitting', async () => {
+  const f = fixture(); await f.finish();
+  const definition = f.definitions.get('openai-image-result');
+  const nodeFor = (id, seq) => {
+    const attachment = { attachmentId: `sha256:${id}`, mediaType: 'image/png', width: 1536, height: 864 };
+    const event = { type: 'tool/result', surfaceOp: 'append', seq, data: { message: {
+      source: { callId: id }, content: [{ type: 'text', text: '图片已生成：model，实际 1536x864，low。' }, { type: 'image', attachment }],
+    } } };
+    return definition.buildViewNode({ key: id, id, start: { event, location: { kind: 'step' } }, state: definition.start({}, { event }) });
+  };
+  const nodes = [nodeFor('old', 1), nodeFor('middle', 2), nodeFor('new', 3)];
+  const snapshot = { nodes: new Map(nodes.map(node => [node.id, node])) };
+  const component = f.registrations.get('openai-image-result').component;
+  const props = { ...f.props, node: nodes[2], useConversation: read => read({ views: { get: () => snapshot } }),
+    renderFactorySlot: (_name, props) => ({ type: 'gallery', props, children: [] }), loadImage: async image => `fixture-image:${image.attachmentId}` };
+  let tree = f.renderComponent(component, props, true);
+  f.all(tree).find(node => node.type === 'button' && node.children.includes('compare')).props.onClick();
+  tree = f.renderComponent(component, props);
+  f.all(tree).find(node => node.type === 'select').props.onChange({ target: { value: 'old:0' } });
+  tree = f.renderComponent(component, props);
+  const selected = f.all(tree).find(node => typeof node.type === 'function' && node.type.name === 'EditableImages' && node.props.images[0].attachment.attachmentId === 'sha256:old');
+  assert.ok(selected, 'chosen old image is shown beside the current result');
+  const meta = f.all(tree).find(node => typeof node.type === 'function' && node.type.name === 'ImageParameters');
+  const parameters = f.renderComponent(meta.type, meta.props, true);
+  assert.match(JSON.stringify(parameters), /1536x864/);
+  assert.match(JSON.stringify(parameters), /low/);
+  assert.match(JSON.stringify(parameters), /model/);
+  const editView = f.renderComponent(selected.type, selected.props, true);
+  await f.all(editView).find(node => node.type === 'button' && node.children.includes('edit')).props.onClick();
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.input.attachmentIds.length, 1);
+  assert.equal(await f.drafts.get(f.input.attachmentIds[0]).file.text(), 'fixture-image:sha256:old');
+  assert.equal(f.input.draft, '/draw a landscape');
 });

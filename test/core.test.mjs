@@ -33,6 +33,7 @@ test('the displayed size and quality also apply to edits with a differently orie
   });
   assert.equal(calls, 1);
   assert.equal(result.size, selected.size);
+  assert.deepEqual(result.referenceIds, ['landscape']);
 });
 
 test('one-shot creation ignores old pictures and editing uses only visible attached references', () => {

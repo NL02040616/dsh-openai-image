@@ -198,6 +198,7 @@ export async function generateImage({ args, config, references = [], resolveKey,
   return {
     operation: references.length ? 'edit' : 'generate',
     referenceCount: references.length,
+    referenceIds: references.map(image => image.attachmentId).filter(Boolean),
     model: body.model,
     size: actualSize,
     requestedSize: body.size,

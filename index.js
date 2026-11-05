@@ -116,6 +116,10 @@ export function apply(ctx, config) {
   };
   const output = {
     schema: { type: 'json' },
+    presentationMeta: (_args, value) => ({ openaiImage: {
+      version: 1, model: value.model, quality: value.quality, size: value.size,
+      requestedSize: value.requestedSize, referenceIds: value.referenceIds,
+    } }),
     render: (_args, value) => [
       { type: 'text', text: `图片已${value.operation === 'edit' ? `编辑（参考 ${value.referenceCount} 张）` : '生成'}：${value.model}，实际 ${value.size}，${value.quality}。图片已保存为对话附件。${value.requestedSize && value.size !== value.requestedSize ? ` 请求尺寸为 ${value.requestedSize}，接口返回尺寸与请求不同；为避免重复扣费，没有自动重试。` : ''}` },
       { type: 'image', attachment: value.attachment },
