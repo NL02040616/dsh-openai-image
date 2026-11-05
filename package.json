@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-openai-image",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Generate and edit reference images in normal DSH conversations, with model capability tooltips.",
+  "description": "One-shot image creation, visible references and edit-again actions in DSH conversations.",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/NL02040616/dsh-openai-image.git" },
   "homepage": "https://github.com/NL02040616/dsh-openai-image#readme",
@@ -20,14 +20,14 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "core.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "files": ["index.js", "core.js", "one-shot.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
   "scripts": { "test": "node --test test/*.test.mjs" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-model-selection", "@deepseek-ai/dsh-client-locale"]
+      "inject": ["@deepseek-ai/dsh-client-ui-model-selection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-attachment"]
     }
   }
 }

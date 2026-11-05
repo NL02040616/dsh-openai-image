@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import z from '@deepseek-ai/schemastery';
 import { LlmAdapter, LlmError, attributionHeaders, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZES, generateImage, isTitleRequest, referenceImages, requestFromMessages, textChunks } from './core.js';
+import { installOneShot } from './one-shot.js';
 
 export const name = 'local-openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
@@ -15,8 +17,14 @@ export const Config = z.object({
 });
 
 export function apply(ctx, config) {
+  installOneShot(ctx, config);
   const ref = credentialRef(config.apiKeyEnv);
   const lifetime = new AbortController();
+  const isImageCall = exec => exec.callId?.startsWith('openai_image_') && exec.agent?.session.requestHeader()?.config.provider === PROVIDER;
+  const finishImageCall = (exec, value) => {
+    if (isImageCall(exec)) exec.concludeTurn();
+    return value;
+  };
   ctx.effect(() => () => lifetime.abort(new Error('OpenAI 生图插件已停用。')));
 
   const generate = async (args, signal, references = []) => {
@@ -62,12 +70,24 @@ export function apply(ctx, config) {
       if (!options.sessionId) {
         throw new LlmError('生图模型仅用于对话中的图片生成。后台摘要等文本任务请使用聊天模型。', 'INVALID_REQUEST');
       }
+      const latestUser = options.messages.findLastIndex(message => message.role === 'user' && message.source?.kind === 'user');
+      const completed = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool' && message.source?.callId?.startsWith('openai_image_'));
+      if (completed) {
+        yield* textChunks(completed.isError ? '本次画图未完成，请查看上方错误。不会自动重试。' : '图片已保存，可点击图片下方的“继续修改”。');
+        yield { type: 'finish', reason: { kind: 'stop' } };
+        return;
+      }
       const { prompt, references } = requestFromMessages(options.messages);
-      const result = await generate({ prompt, model: options.model }, options.signal, references);
-      yield* textChunks(`${result.operation === 'edit' ? `已编辑图片（参考 ${result.referenceCount} 张）` : '已生成图片'} · ${result.model} · ${result.size}`);
-      yield { type: 'block-end', index: 1, block: { type: 'image', attachment: result.attachment } };
-      yield { type: 'usage', usage: result.usage };
-      yield { type: 'finish', reason: { kind: 'stop' } };
+      const toolName = references.length ? 'openai_edit_image' : 'openai_generate_image';
+      if (!options.tools?.some(tool => tool.name === toolName)) {
+        throw new LlmError('当前对话未开放画图工具。请在普通对话中使用，并允许 OpenAI 生图工具。', 'INVALID_REQUEST');
+      }
+      // Use native tool results: chat adapters accept their images as history.
+      yield { type: 'block-end', index: 0, block: {
+        type: 'tool-call', id: `openai_image_${randomUUID().replaceAll('-', '')}`,
+        name: toolName, arguments: JSON.stringify({ prompt, model: options.model }),
+      } };
+      yield { type: 'finish', reason: { kind: 'tool-calls' } };
     }
   }
   ctx.llm.registerAdapter([PROVIDER], new ImageAdapter());
@@ -92,7 +112,7 @@ export function apply(ctx, config) {
     output,
     timeoutMs: config.timeoutMs + 30000,
     isConcurrencySafe: () => false,
-    execute: (args, exec) => generate(args, exec.signal),
+    execute: async (args, exec) => finishImageCall(exec, await generate(args, exec.signal)),
   }));
   ctx.tools.register(defineTool({
     name: 'openai_edit_image',
@@ -101,10 +121,11 @@ export function apply(ctx, config) {
     output,
     timeoutMs: config.timeoutMs + 30000,
     isConcurrencySafe: () => false,
-    execute: (args, exec) => {
-      const references = referenceImages(exec.agent?.session?.deriveMessages() ?? []);
+    execute: async (args, exec) => {
+      const messages = exec.agent?.session?.deriveMessages() ?? [];
+      const references = isImageCall(exec) ? requestFromMessages(messages).references : referenceImages(messages);
       if (!references.length) throw new LlmError('当前对话中没有可编辑的参考图，请先上传 PNG、JPEG 或 WebP 图片。', 'INVALID_REQUEST');
-      return generate(args, exec.signal, references);
+      return finishImageCall(exec, await generate(args, exec.signal, references));
     },
   }));
 }

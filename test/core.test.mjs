@@ -6,6 +6,17 @@ const config = { apiKeyEnv: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2.5-flare
 const png = Buffer.from('89504e470d0a1a0a0000000049454e44ae426082', 'hex');
 const response = () => ({ ok: true, status: 200, json: async () => ({ data: [{ b64_json: png.toString('base64') }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } }) });
 
+test('one-shot creation ignores old pictures and editing uses only visible attached references', () => {
+  const old = { attachmentId: 'old', mediaType: 'image/png' };
+  const chosen = { attachmentId: 'chosen', mediaType: 'image/png' };
+  const history = [{ role: 'assistant', source: { kind: 'model', provider: 'openai-image' }, content: [{ type: 'image', attachment: old }] }];
+  const request = { role: 'user', source: { kind: 'user', openaiImage: { version: 1, model: config.defaultModel } }, content: [{ type: 'text', text: 'draw a new scene' }] };
+  assert.deepEqual(requestFromMessages([...history, request]).references, []);
+  request.content.push({ type: 'image', attachment: chosen });
+  assert.deepEqual(requestFromMessages([...history, request]).references, [chosen]);
+  assert.equal(requestFromMessages([...history, request]).prompt, 'draw a new scene');
+});
+
 test('one official request, correct parameters and durable image result, no key in output', async () => {
   let calls = 0;
   const result = await generateImage({
