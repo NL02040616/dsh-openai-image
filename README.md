@@ -2,9 +2,13 @@
 
 在 DeepSeek Harness 的普通对话中点击 **画图** 即可生成图片，保留当前聊天模型。参考图清晰可见，每张图片下方都可点击 **继续修改**。
 
-当前 1.4.1 面向 **DSH Windows 0.2.2-rc.1**。DSH 0.2.1-rc.5 请继续使用 1.3.0 安装包。本插件为独立项目，非 DeepSeek 或 OpenAI 官方发行。
+**当前版本：1.5.0，支持 GPT Image 2.6。** 已加入 `gpt-image-2.6-flare` 和 `gpt-image-2.6-sunburst`，支持现有的画图按钮、模型切换、助手工具、参考图编辑和图片卡片，并提供中英文悬停介绍。默认模型仍为 2.5 Flare，已有对话保存的模型、画质与尺寸保持原样；请在画图栏主动选择 2.6。下方 1.5.0 安装包已包含本次适配。
 
-**当前版本：1.4.1。** 修复比例或像素尺寸后紧跟英文句号时识别失败的问题。保留生成状态卡、图片版本对比、从旧版本继续修改、参数选择、Windows 系统代理/PAC 和一次性画图。渐进预览未启用。
+本次仍输出单张静态 PNG，使用 low / medium / high 画质；不启用 GIF、SVG、涂画标注或渐进预览。2.6 的 `complexity` 使用 API 默认值 high，没有另加自动重试或模型回退。尺寸继续经过插件现有的比例识别和像素校验；已实测 Flare 的 1536×864 和 Sunburst 的 864×1536。官方当前尺寸章节尚未逐项列出 2.6 的自定义尺寸限制，其他尺寸仍以 API 返回为准，不把本地校验视为服务端保证。官方资料核对于 2026-11-06：[Flare](https://developers.openai.com/api/docs/models/gpt-image-2.6-flare)、[Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst)、[图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)。
+
+当前 1.5.0 面向 **DSH Windows 0.2.2-rc.1**。DSH 0.2.1-rc.5 请继续使用 1.3.0 安装包。本插件为独立项目，非 DeepSeek 或 OpenAI 官方发行。
+
+1.5.0 已于 2026-11-06 通过 DSH 0.2.2 原生命令、工具与附件链路各实际调用一次新模型：Flare / low 在 11 秒内返回 1536×864 PNG，Sunburst / low 在 19 秒内返回 864×1536 PNG，两次均为 HTTP 200。请求从描述识别 16:9 和 9:16，核对了 PNG 真实宽高、卡片元数据与历史重放，并恢复原聊天模型。每个模型仅调用一次，无自动重试；实测使用隔离会话与 host 网络通道，不改系统代理和账号配置。参考图编辑通过模拟接口验证，本次未额外付费改图。保留已有生成状态卡、版本对比和比例识别修复，渐进预览未启用。
 
 1.4.1 修复 `画面比例16：9.人物要自然`、`输出1536x864.` 等描述误回退到默认尺寸的问题。前端预览与后端请求使用同一规则，英文句号只有在后面紧跟数字时才作为小数的一部分处理。9 项相关回归测试通过，覆盖标点、合法小数比例、避免截断小数以及前端发送参数；本次修复没有额外调用收费 API。使用描述识别时，请将尺寸选为 **跟随描述中的尺寸/比例**；手动尺寸仍优先。
 
@@ -23,7 +27,7 @@
 在 DSH 左侧打开 **插件 → 添加插件 → 安装第三方插件**，把下面这一行粘贴到“包名或地址”中，然后点击安装：
 
 ```text
-https://gitee.com/un-important/dsh-openai-image/raw/main/dsh-openai-image-1.4.1.tgz
+https://gitee.com/un-important/dsh-openai-image/raw/main/dsh-openai-image-1.5.0.tgz
 ```
 
 不需要安装 Git、Node.js，也不需要登录 Gitee、打开终端或手动解压。DSH 会下载并管理插件副本。
@@ -38,9 +42,9 @@ github:NL02040616/dsh-openai-image
 
 仓库已包含可直接运行的 JavaScript，安装时无需编译，也不执行安装脚本。DSH 会下载并管理插件副本，无需手动保存源码目录。
 
-从 1.3.3 或 1.4.0 升级：先记录插件自定义配置，在 DSH 插件管理器中使用上方 **1.4.1** 地址更新；如提示已有副本，卸载旧副本后重新安装，恢复所需配置，再通过 **应用 → 退出** 完整退出并重开 DSH。
+从 1.3.3、1.4.0 或 1.4.1 升级：先记录插件自定义配置，在 DSH 插件管理器中使用上方 **1.5.0** 地址更新；如提示已有副本，卸载旧副本后重新安装，恢复所需配置，再通过 **应用 → 退出** 完整退出并重开 DSH。
 
-从 1.3.2 或更早版本升级：先记录插件组件中的自定义配置（默认模型、画质、尺寸、网络模式及代理设置），在 DSH 插件页卸载旧的 `@local/dsh-openai-image`，再安装 **1.4.1**，恢复所需配置，随后通过 **应用 → 退出** 完整退出并重开 DSH。新包名为 `dsh-openai-image`，DSH 会把它视为另一个包，不能让新旧副本同时启用，否则会重复注册工具和界面。使用源码目录链接安装的用户也需完成这次迁移，不能只更新目录后直接重启。卸载插件不会删除对话图片；API Key 由 DSH 单独管理，无需复制到新插件。
+从 1.3.2 或更早版本升级：先记录插件组件中的自定义配置（默认模型、画质、尺寸、网络模式及代理设置），在 DSH 插件页卸载旧的 `@local/dsh-openai-image`，再安装 **1.5.0**，恢复所需配置，随后通过 **应用 → 退出** 完整退出并重开 DSH。新包名为 `dsh-openai-image`，DSH 会把它视为另一个包，不能让新旧副本同时启用，否则会重复注册工具和界面。使用源码目录链接安装的用户也需完成这次迁移，不能只更新目录后直接重启。卸载插件不会删除对话图片；API Key 由 DSH 单独管理，无需复制到新插件。
 
 ## 首次配置
 
@@ -99,11 +103,13 @@ GPT Image 2.5 支持自定义尺寸，但宽高必须为 16 的倍数、最长�
 
 | 模型 | 特点 |
 | --- | --- |
+| GPT Image 2.6 Flare | 新一代速度优先，适合交互式创作和快速迭代；本插件支持静态 PNG 生图和参考图编辑。 |
+| GPT Image 2.6 Sunburst | 新一代精细创作，适合复杂构图、细节表现和图片修改；本插件支持静态 PNG 生图和参考图编辑。 |
 | GPT Image 2.5 Flare | 速度优先，适合日常创作和快速迭代；支持参考图编辑、主体保留。 |
 | GPT Image 2.5 Sunburst | 质量优先，适合复杂画面和精细修改；支持参考图编辑、主体保留。 |
 | GPT Image 1 Mini | 经济型，支持生图和改图；仅低输入保真度，官方已标记弃用。 |
 
-说明核对于 2026-11-04：[官方模型选择与编辑指南](https://developers.openai.com/api/docs/guides/image-prompting)、[Mini 模型说明](https://developers.openai.com/api/docs/models/gpt-image-1-mini)、[图片编辑接口](https://developers.openai.com/api/reference/resources/images/methods/edit)。实际速度与效果随提示词、尺寸及画质变化，修改结果仍需检查。
+2.6 说明核对于 2026-11-06，见上方模型文档；旧模型说明核对于 2026-11-04：[官方模型选择与编辑指南](https://developers.openai.com/api/docs/guides/image-prompting)、[Mini 模型说明](https://developers.openai.com/api/docs/models/gpt-image-1-mini)、[图片编辑接口](https://developers.openai.com/api/reference/resources/images/methods/edit)。实际速度与效果随提示词、尺寸及画质变化，修改结果仍需检查。
 
 ## 凭据与费用
 

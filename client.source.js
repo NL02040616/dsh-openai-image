@@ -6,6 +6,8 @@ window.__ModuleLoader__.load({
     /* SHARED_IMAGE_HISTORY */
     const descriptions = {
       zh: {
+        'gpt-image-2.6-flare': '新一代速度优先：适合交互式创作和快速迭代，支持文字生图与参考图编辑。本插件输出静态 PNG；费用随画质、尺寸和参考图用量变化。',
+        'gpt-image-2.6-sunburst': '新一代精细创作：适合复杂构图、细节表现和图片修改，支持文字生图与参考图编辑。本插件输出静态 PNG；费用随画质、尺寸和参考图用量变化。',
         'gpt-image-2.5-flare': '速度优先：适合日常创作、快速出图和反复调整。支持参考图编辑与主体保留。',
         'gpt-image-2.5-sunburst': '质量优先：适合复杂画面、细节要求较高的作品和精细修改。支持参考图编辑与主体保留。',
         'gpt-image-1-mini': '经济型：GPT Image 1 的低成本版本，支持文字生图和参考图编辑；仅支持低输入保真度。官方已标记弃用。',
@@ -34,6 +36,8 @@ window.__ModuleLoader__.load({
         basedOn: '参考版本', noVersions: '暂无其他已加载的图片可对比。', sizeMismatch: '实际尺寸与请求不同',
       },
       en: {
+        'gpt-image-2.6-flare': 'New generation, speed first: for interactive creation and quick iterations, with text-to-image generation and reference-image editing. This plugin outputs static PNGs. Cost varies with quality, dimensions and reference-image usage.',
+        'gpt-image-2.6-sunburst': 'New generation, detailed visual work: for complex compositions, fine detail and image editing, with text and reference-image inputs. This plugin outputs static PNGs. Cost varies with quality, dimensions and reference-image usage.',
         'gpt-image-2.5-flare': 'Speed first: suited to everyday creation and quick iterations. Supports reference-image editing and subject preservation.',
         'gpt-image-2.5-sunburst': 'Quality first: suited to complex scenes, demanding detail, and precise edits. Supports reference-image editing and subject preservation.',
         'gpt-image-1-mini': 'Budget option: a cost-efficient GPT Image 1 variant for generation and editing. Only low input fidelity is supported. Officially deprecated.',

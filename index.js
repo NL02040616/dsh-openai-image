@@ -110,7 +110,7 @@ export function apply(ctx, config) {
 
   const parameters = {
     prompt: { type: 'string', required: true, description: 'Complete description of the desired image, including style and any exact text.' },
-    model: { type: 'string', enum: MODELS.map(item => item.id), description: 'Optional image model; defaults to GPT Image 2.5 Flare.' },
+    model: { type: 'string', enum: MODELS.map(item => item.id), description: 'Optional image model; uses the configured default when omitted. GPT Image 2.6 Flare is for fast iteration; GPT Image 2.6 Sunburst is for detailed visual work. Preserve the user\'s selected model.' },
     size: { type: 'string', description: 'Explicit output WIDTHxHEIGHT pixels. GPT Image 2.5: multiples of 16, max edge 3840, aspect 1:3–3:1, 655360–8294400 pixels. Example 1536x864 for 16:9. Mini supports only 1024x1024, 1536x1024, 1024x1536. Omit to detect the requested dimensions or aspect ratio from the prompt. Never silently approximate unsupported sizes.' },
     quality: { type: 'string', enum: QUALITIES, description: 'Optional quality. Default medium. Use low for previews or high when requested.' },
   };

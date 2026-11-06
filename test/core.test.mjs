@@ -6,6 +6,48 @@ const config = { apiKeyEnv: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2.5-flare
 const png = Buffer.from('89504e470d0a1a0a0000000049454e44ae426082', 'hex');
 const response = () => ({ ok: true, status: 200, json: async () => ({ data: [{ b64_json: png.toString('base64') }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } }) });
 
+test('2.6 generation and JSON reference edits preserve explicit model, quality and dimensions', async () => {
+  for (const model of ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']) {
+    for (const quality of ['low', 'medium', 'high']) {
+      for (const editing of [false, true]) {
+        const reference = { attachmentId: 'selected-old-version', mediaType: 'image/png', width: 1024, height: 1536 };
+        const args = commandRequest(OPTIONS_PREFIX + JSON.stringify({ model, quality, size: '1024x1024', sizeMode: 'prompt', prompt: '画面比例16：9.保留主体' }), config);
+        let calls = 0;
+        const result = await generateImage({ args, config, references: editing ? [reference] : [],
+          resolveKey: async () => 'dummy', readImage: async () => ({ data: png }),
+          saveImage: async input => { assert.equal(input.mediaType, 'image/png'); return { attachmentId: 'output' }; },
+          fetchImpl: async (url, init) => {
+            calls++;
+            assert.equal(url, `https://api.openai.com/v1/images/${editing ? 'edits' : 'generations'}`);
+            const body = JSON.parse(init.body);
+            assert.deepEqual(body, { model, quality, prompt: args.prompt, size: '1536x864', n: 1, output_format: 'png',
+              ...(editing ? { images: [{ image_url: `data:image/png;base64,${png.toString('base64')}` }] } : {}) });
+            return response();
+          },
+        });
+        assert.equal(calls, 1);
+        assert.equal(result.model, model);
+        assert.equal(result.quality, quality);
+        assert.equal(result.requestedSize, '1536x864');
+        assert.deepEqual(result.referenceIds, editing ? [reference.attachmentId] : []);
+      }
+    }
+  }
+});
+
+test('an unavailable 2.6 model fails once without switching models', async () => {
+  let calls = 0;
+  await assert.rejects(generateImage({ args: { prompt: 'cat', model: 'gpt-image-2.6-flare' }, config,
+    resolveKey: async () => 'dummy', saveImage: async () => { throw new Error('unexpected save'); },
+    fetchImpl: async (_url, init) => {
+      calls++;
+      assert.equal(JSON.parse(init.body).model, 'gpt-image-2.6-flare');
+      return { ok: false, status: 404, json: async () => ({ error: { code: 'model_not_found', message: 'Model unavailable for this project' } }) };
+    },
+  }), error => error.status === 404 && /unavailable/.test(error.message));
+  assert.equal(calls, 1);
+});
+
 test('per-image selections are explicit, validated, and keep prompt text separate', () => {
   const selected = { model: 'gpt-image-1-mini', quality: 'low', size: '1024x1536', prompt: '画出文字 "high"\n新建图片：雪山' };
   assert.deepEqual(commandRequest(OPTIONS_PREFIX + JSON.stringify(selected), config), { ...selected, n: 1, output_format: 'png' });

@@ -2,6 +2,8 @@ import { createSizing } from './sizing.js';
 const sizing = createSizing();
 export const PROVIDER = 'openai-image';
 export const MODELS = Object.freeze([
+  { id: 'gpt-image-2.6-flare', name: 'GPT Image 2.6 Flare · 生图', description: '新一代速度优先模型，适合交互式创作和快速迭代；支持文字生图与参考图编辑。本插件输出静态 PNG。' },
+  { id: 'gpt-image-2.6-sunburst', name: 'GPT Image 2.6 Sunburst · 生图', description: '新一代精细创作模型，适合复杂构图、细节表现和图片修改；支持文字生图与参考图编辑。本插件输出静态 PNG。' },
   { id: 'gpt-image-2.5-flare', name: 'GPT Image 2.5 Flare · 生图', description: '速度优先，适合日常创作和快速迭代；支持参考图编辑与主体保留。' },
   { id: 'gpt-image-2.5-sunburst', name: 'GPT Image 2.5 Sunburst · 生图', description: '质量优先，适合复杂画面和精细修改；支持参考图编辑与主体保留。' },
   { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini · 生图', description: 'GPT Image 1 的经济型版本，支持生图和改图；仅支持低输入保真度。官方已标记弃用。' },

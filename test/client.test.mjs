@@ -6,9 +6,9 @@ import { MODELS, QUALITIES, SIZE_PRESETS, commandRequest } from '../core.js';
 const code = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 
 function fixture(saved = new Map()) {
-  const config = { defaultModel: MODELS[1].id, quality: 'high', size: '1024x1536' };
+  const config = { defaultModel: 'gpt-image-2.5-sunburst', quality: 'high', size: '1024x1536' };
   let source, resolveOptions;
-  const calls = [], slots = new Map(), events = new Map(), disposers = [], definitions = new Map(), registrations = new Map();
+  const calls = [], slots = new Map(), events = new Map(), disposers = [], definitions = new Map(), registrations = new Map(), translations = {};
   let states = [], cursor = 0;
   const drafts = new Map();
   const React = {
@@ -19,7 +19,7 @@ function fixture(saved = new Map()) {
     useEffect: callback => { callback(); },
   };
   const ctx = {
-    locale: { register: () => {}, bind: () => key => key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
+    locale: { register: (_name, copy) => Object.assign(translations, copy), bind: () => key => key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
     effect: callback => { disposers.push(callback()); }, on: (name, callback) => events.set(name, callback),
     slots: { inject: (_name, callback) => callback(), register: (meta, component) => {
       // DSH's read-image-toolview already owns this declaration. Re-declaring
@@ -66,7 +66,7 @@ function fixture(saved = new Map()) {
   const all = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(all)];
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
   const renderComponent = (component, componentProps, fresh = false) => { if (fresh) states = []; cursor = 0; return component(componentProps); };
-  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts };
+  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts, translations };
 }
 
 test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {
@@ -103,7 +103,7 @@ test('visible options use real defaults, snapshot each request and isolate conve
   const claim = f.source.matchClaim({ sessionId: 'one' }, '/draw');
   assert.equal((await claim.submit('draft')).kind, 'error'); assert.equal(f.calls.length, 0);
   await f.finish();
-  assert.equal(f.control('model').props.value, MODELS[1].id);
+  assert.equal(f.control('model').props.value, f.config.defaultModel);
   f.control('model').props.onChange({ target: { value: MODELS[0].id } });
   f.control('quality').props.onChange({ target: { value: 'low' } });
   f.input.draft = '/draw 画面比例16：9.人物要自然';
@@ -119,6 +119,32 @@ test('visible options use real defaults, snapshot each request and isolate conve
   const reload = fixture(f.saved); await reload.finish();
   assert.ok(reload.control('quality'), JSON.stringify(reload.render()));
   assert.equal(reload.control('quality').props.value, 'medium');
+});
+
+test('2.6 models are selectable with bilingual tooltips while saved legacy choices survive', async () => {
+  const old = { model: 'gpt-image-2.5-flare', quality: 'low', size: '864x1536', sizeMode: 'manual' };
+  const f = fixture(new Map([['dsh.openaiImage.options.v1:one', JSON.stringify(old)]]));
+  await f.finish();
+  assert.equal(f.control('model').props.value, old.model);
+  assert.equal(f.control('quality').props.value, old.quality);
+  assert.equal(f.control('size').props.value, old.size);
+  for (const id of ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']) {
+    const option = f.all(f.control('model')).find(node => node.type === 'option' && node.props.value === id);
+    assert.ok(option, `${id} must be available in the draw picker`);
+    assert.equal(option.props.title, id);
+    for (const language of ['zh', 'en']) assert.match(f.translations[language][id], /PNG/);
+    const label = f.registrations.get('conversation.input.model.label').component({ provider: { id: 'openai-image' }, model: MODELS.find(model => model.id === id) });
+    assert.ok(label.props.title.startsWith(id));
+    f.control('model').props.onChange({ target: { value: id } });
+    const reference = { type: 'image', data: 'reference' };
+    await f.source.matchClaim({ sessionId: 'one' }, '/draw').submit('修改背景，保留构图', null, [reference]);
+    assert.equal(f.calls.at(-1).request.model, id);
+    assert.equal(f.calls.at(-1).request.quality, old.quality);
+    assert.equal(f.calls.at(-1).request.size, old.size);
+    assert.equal(f.calls.at(-1).attachments[0], reference);
+  }
+  const reload = fixture(f.saved); await reload.finish();
+  assert.equal(reload.control('model').props.value, 'gpt-image-2.6-sunburst');
 });
 
 test('bad sizes, load errors and command refusal never silently select a fallback or discard attachments', async () => {
