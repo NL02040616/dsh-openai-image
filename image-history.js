@@ -2,16 +2,17 @@
 export function createImageHistory() {
   const kind = 'openai-image-result';
   const tools = new Set(['openai_generate_image', 'openai_edit_image']);
+  const requestRecord = 'plugin:openai-image/request';
   const textOf = block => (block?.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
-  function info(block, meta, args = {}) {
+  function info(block, meta, args = {}, request = {}) {
     const text = textOf(block);
     const saved = meta?.openaiImage?.version === 1 ? meta.openaiImage : {};
     // Older releases saved a human-readable result but no presentation metadata.
     const legacy = text.match(/^图片已(?:生成|编辑[^：]*)：([^，]+)，实际 (\d+x\d+)，([^。]+)。/);
     return {
-      model: saved.model ?? legacy?.[1] ?? args.model,
-      quality: saved.quality ?? legacy?.[3] ?? args.quality,
-      size: saved.size ?? legacy?.[2], requestedSize: saved.requestedSize ?? args.size,
+      model: saved.model ?? legacy?.[1] ?? request.model ?? args.model,
+      quality: saved.quality ?? legacy?.[3] ?? request.quality ?? args.quality,
+      size: saved.size ?? legacy?.[2], requestedSize: saved.requestedSize ?? request.size ?? args.size,
       referenceIds: Array.isArray(saved.referenceIds) ? saved.referenceIds : [],
       text,
     };
@@ -25,13 +26,16 @@ export function createImageHistory() {
   }
   function reduce(previous, match) {
     const event = match.event;
+    if (event.type === requestRecord) return { ...previous, callId: String(event.data.callId), request: event.data.request,
+      operation: event.data.request.operation, seq: previous?.seq ?? event.seq, time: previous?.time ?? event.time,
+      status: previous?.status ?? 'running' };
     if (event.type === 'tool/call') {
       let args = {};
       try {
         const parsed = JSON.parse(event.data.arguments);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed;
       } catch {}
-      return { callId: String(event.data.callId), args, operation: event.data.name === 'openai_edit_image' ? 'edit' : 'generate',
+      return { ...previous, callId: String(event.data.callId), args, operation: event.data.name === 'openai_edit_image' ? 'edit' : 'generate',
         seq: previous?.seq ?? event.seq, time: event.time, status: 'running' };
     }
     const block = event.data.message;
@@ -42,6 +46,7 @@ export function createImageHistory() {
   const definition = {
     kind, target: 'chat',
     match: {
+      [requestRecord]: event => event.data?.request?.version === 1 && event.data.callId ? { id: String(event.data.callId), role: 'start' } : null,
       'tool/call': event => tools.has(event.data?.name) ? { id: String(event.data.callId), role: 'start' } : null,
       'tool/result': event => event.surfaceOp === 'append' && event.data?.message?.source?.callId
         ? { id: String(event.data.message.source.callId), role: knownResult(event) ? 'start' : 'update' } : null,
@@ -67,7 +72,7 @@ export function createImageHistory() {
       .sort((a, b) => a.anchorSeq - b.anchorSeq)
       .flatMap(node => images(node.data.block).map((image, index) => ({
         key: `${node.id}:${index}`, image, callId: node.id, seq: node.anchorSeq,
-        ...info(node.data.block, node.data.meta, node.data.args),
+        ...info(node.data.block, node.data.meta, node.data.args, node.data.request),
       })));
   }
   return { kind, definition, info, images, versions };

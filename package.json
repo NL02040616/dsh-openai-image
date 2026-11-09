@@ -1,9 +1,9 @@
 {
   "name": "dsh-openai-image",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
-  "description": "Image creation with status cards, model and size details, version comparison and edit-again actions in DSH conversations.",
+  "description": "Image creation with recoverable requests, ordered references, retry actions, status cards and version comparison in DSH conversations.",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/NL02040616/dsh-openai-image.git" },
   "homepage": "https://github.com/NL02040616/dsh-openai-image#readme",
@@ -12,7 +12,8 @@
     "@deepseek-ai/schemastery": "~3.19.0",
     "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
     "@deepseek-ai/dsh-credentials": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-tools": "0.2.2-rc.1"
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.1"
   },
   "exports": {
     ".": "./index.js",
@@ -20,7 +21,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "core.js", "sizing.js", "one-shot.js", "client.js", "transport.js", "windows-request.ps1", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "files": ["index.js", "core.js", "sizing.js", "one-shot.js", "recovery.js", "client.js", "transport.js", "windows-request.ps1", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
   "scripts": { "test": "node --test test/*.test.mjs", "build:client": "node scripts/build-client.mjs", "check:client": "node scripts/build-client.mjs --check" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

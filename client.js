@@ -76,16 +76,17 @@ window.__ModuleLoader__.load({
     const history = (function createImageHistory() {
   const kind = 'openai-image-result';
   const tools = new Set(['openai_generate_image', 'openai_edit_image']);
+  const requestRecord = 'plugin:openai-image/request';
   const textOf = block => (block?.content ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
-  function info(block, meta, args = {}) {
+  function info(block, meta, args = {}, request = {}) {
     const text = textOf(block);
     const saved = meta?.openaiImage?.version === 1 ? meta.openaiImage : {};
     // Older releases saved a human-readable result but no presentation metadata.
     const legacy = text.match(/^图片已(?:生成|编辑[^：]*)：([^，]+)，实际 (\d+x\d+)，([^。]+)。/);
     return {
-      model: saved.model ?? legacy?.[1] ?? args.model,
-      quality: saved.quality ?? legacy?.[3] ?? args.quality,
-      size: saved.size ?? legacy?.[2], requestedSize: saved.requestedSize ?? args.size,
+      model: saved.model ?? legacy?.[1] ?? request.model ?? args.model,
+      quality: saved.quality ?? legacy?.[3] ?? request.quality ?? args.quality,
+      size: saved.size ?? legacy?.[2], requestedSize: saved.requestedSize ?? request.size ?? args.size,
       referenceIds: Array.isArray(saved.referenceIds) ? saved.referenceIds : [],
       text,
     };
@@ -99,13 +100,16 @@ window.__ModuleLoader__.load({
   }
   function reduce(previous, match) {
     const event = match.event;
+    if (event.type === requestRecord) return { ...previous, callId: String(event.data.callId), request: event.data.request,
+      operation: event.data.request.operation, seq: previous?.seq ?? event.seq, time: previous?.time ?? event.time,
+      status: previous?.status ?? 'running' };
     if (event.type === 'tool/call') {
       let args = {};
       try {
         const parsed = JSON.parse(event.data.arguments);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed;
       } catch {}
-      return { callId: String(event.data.callId), args, operation: event.data.name === 'openai_edit_image' ? 'edit' : 'generate',
+      return { ...previous, callId: String(event.data.callId), args, operation: event.data.name === 'openai_edit_image' ? 'edit' : 'generate',
         seq: previous?.seq ?? event.seq, time: event.time, status: 'running' };
     }
     const block = event.data.message;
@@ -116,6 +120,7 @@ window.__ModuleLoader__.load({
   const definition = {
     kind, target: 'chat',
     match: {
+      [requestRecord]: event => event.data?.request?.version === 1 && event.data.callId ? { id: String(event.data.callId), role: 'start' } : null,
       'tool/call': event => tools.has(event.data?.name) ? { id: String(event.data.callId), role: 'start' } : null,
       'tool/result': event => event.surfaceOp === 'append' && event.data?.message?.source?.callId
         ? { id: String(event.data.message.source.callId), role: knownResult(event) ? 'start' : 'update' } : null,
@@ -141,7 +146,7 @@ window.__ModuleLoader__.load({
       .sort((a, b) => a.anchorSeq - b.anchorSeq)
       .flatMap(node => images(node.data.block).map((image, index) => ({
         key: `${node.id}:${index}`, image, callId: node.id, seq: node.anchorSeq,
-        ...info(node.data.block, node.data.meta, node.data.args),
+        ...info(node.data.block, node.data.meta, node.data.args, node.data.request),
       })));
   }
   return { kind, definition, info, images, versions };
@@ -176,6 +181,11 @@ window.__ModuleLoader__.load({
         outputSize: '实际尺寸', compare: '对比版本', closeCompare: '收起对比', compareWith: '选择对比版本', currentVersion: '当前图片',
         version: '版本', historyHint: '列出当前对话已加载的成功图片；向上加载历史可查看更早版本。选择图片下方“继续修改”可从该版本开始。',
         basedOn: '参考版本', noVersions: '暂无其他已加载的图片可对比。', sizeMismatch: '实际尺寸与请求不同',
+        reedit: '重新编辑', retryOriginal: '按原参数重试', retryCost: '按原模型、画质、尺寸和参考图生成一次，会产生新的 API 用量',
+        recoverBusy: '正在恢复…', replaceDraft: '输入框已有内容。是否替换为这次画图的提示词、参考图和参数？', replace: '替换并编辑', keepDraft: '保留现有草稿',
+        restored: '已恢复到输入框，修改后发送即可。尚未生成图片。', retried: '已提交一次重试，请查看新的生成卡片。',
+        recoverChanged: '输入内容或会话已变化，未替换草稿，请重新点击。', recoverIncomplete: '历史参数不完整或已不可用，请补全后发送。',
+        chooseRequired: '请选择（原值未记录或已不可用）', referenceMissing: '参考图 {index} 无法读取，未替换草稿，请检查附件。',
       },
       en: {
         'gpt-image-2.6-flare': 'New generation, speed first: for interactive creation and quick iterations, with text-to-image generation and reference-image editing. This plugin outputs static PNGs. Cost varies with quality, dimensions and reference-image usage.',
@@ -206,6 +216,11 @@ window.__ModuleLoader__.load({
         outputSize: 'Actual dimensions', compare: 'Compare versions', closeCompare: 'Close comparison', compareWith: 'Choose a version', currentVersion: 'Current image',
         version: 'Version', historyHint: 'Successful images loaded in this conversation. Load older history for more versions. Use Edit this image to branch from any version.',
         basedOn: 'Reference version', noVersions: 'No other loaded images to compare.', sizeMismatch: 'Output dimensions differ from the request',
+        reedit: 'Edit request', retryOriginal: 'Retry original request', retryCost: 'Generate once with the original model, quality, dimensions and references; incurs new API usage',
+        recoverBusy: 'Restoring…', replaceDraft: 'The composer already contains a draft. Replace it with this request and its references and settings?', replace: 'Replace and edit', keepDraft: 'Keep draft',
+        restored: 'Restored to the composer. Edit and send when ready. No image generated yet.', retried: 'One retry submitted. See the new generation card.',
+        recoverChanged: 'The draft or conversation changed. Nothing replaced; try again.', recoverIncomplete: 'Some original settings are missing or unavailable. Complete them before sending.',
+        chooseRequired: 'Select (original value missing or unavailable)', referenceMissing: 'Reference {index} could not be loaded. Draft unchanged; check the attachment.',
       },
     };
     return {
@@ -231,17 +246,17 @@ window.__ModuleLoader__.load({
         const storageKey = id => `dsh.openaiImage.options.v1:${id}`;
         const valid = value => value && catalog.status === 'ready'
           && catalog.models.some(model => model.id === value.model)
-          && catalog.qualities.includes(value.quality) && typeof value.size === 'string' && value.size.length <= 30
+          && catalog.qualities.includes(value.quality) && typeof value.size === 'string' && value.size.trim().length > 0 && value.size.length <= 30
           && (value.sizeMode === undefined || ['prompt', 'manual'].includes(value.sizeMode));
         function selectionFor(id) {
           if (catalog.status !== 'ready') return null;
           if (!choices.has(id)) {
-            try { const saved = JSON.parse(localStorage.getItem(storageKey(id))); if (valid(saved)) choices.set(id, saved); } catch {}
+            try { const saved = JSON.parse(localStorage.getItem(storageKey(id))); if (valid(saved) || saved?.recovery === true) choices.set(id, saved); } catch {}
           }
-          return valid(choices.get(id)) ? choices.get(id) : catalog.defaults;
+          return choices.get(id)?.recovery || valid(choices.get(id)) ? choices.get(id) : catalog.defaults;
         }
         function select(id, value) {
-          if (!valid(value)) return;
+          if (!valid(value) && !value?.recovery) return;
           choices.set(id, value);
           try { localStorage.setItem(storageKey(id), JSON.stringify(value)); } catch {}
           notify();
@@ -272,10 +287,11 @@ window.__ModuleLoader__.load({
             async submit(prompt, _actx, attachments = []) {
               const options = selectionFor(session.sessionId);
               if (!options) return { kind: 'error', text: t('optionsFailed') };
+              if (!valid(options)) return { kind: 'error', text: t('recoverIncomplete') };
               let size;
               try { size = sizing.resolve({ ...options, prompt }).size; }
               catch (error) { return { kind: 'error', text: error.message }; }
-              const line = '/image @dsh-image-options-v1 ' + JSON.stringify({ ...options, size, sizeMode: 'manual', prompt });
+              const line = '/image @dsh-image-options-v1 ' + JSON.stringify({ ...options, size, sizeMode: 'manual', prompt, draftSize: options.size, draftSizeMode: options.sizeMode ?? 'prompt' });
               const result = await ctx.remote.commands.execute(session.sessionId, line, attachments);
               if (!result.ok) throw new Error(result.error.message);
               return result.value?.result ?? { kind: 'error', text: t('optionsFailed') };
@@ -338,6 +354,7 @@ window.__ModuleLoader__.load({
           const sizeValue = options?.sizeMode !== 'manual' ? 'prompt' : custom || !availableSizes?.includes(options?.size) ? 'custom' : options.size;
           const picker = (key, values, label) => h('label', { style: { display: 'flex', gap: 6, alignItems: 'center' } }, t(key),
             h('select', { 'aria-label': t(key), value: options[key], disabled: running || !editable(input), style: { ...buttonStyle, maxWidth: '100%' }, onChange: event => choose(key, event.target.value) },
+              !values.includes(options[key]) && h('option', { value: options[key] ?? '', disabled: true }, t('chooseRequired')),
               values.map(value => h('option', { key: value, value, title: key === 'model' ? t(value) : undefined }, label(value)))));
           const images = ctx.conversation.resolveDraftAttachments(input.attachmentIds).filter(item => item.kind === 'image');
           const removeReferences = () => {
@@ -350,6 +367,7 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', style: buttonStyle, disabled: !editable(input), onClick: () => cancel(input, inputActions) }, t('cancel'))),
             options ? h(React.Fragment, null,
               legacy && h('div', { style: { marginTop: 8 } }, t('legacy')),
+              !valid(options) && h('div', { role: 'alert', style: { marginTop: 8 } }, t('recoverIncomplete')),
               h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 } },
                 picker('model', catalog.models.map(model => model.id), id => catalog.models.find(model => model.id === id).name.replace(' · 生图', '')),
                 picker('quality', catalog.qualities, value => t(value)),
@@ -431,10 +449,96 @@ window.__ModuleLoader__.load({
             h('div', { role: block?.isError ? 'alert' : 'status', style: { whiteSpace: 'pre-wrap', fontSize: 12 } }, details.text || t(phase === 'result' ? 'generationFailed' : 'generating')),
             images.length > 0 && h(EditableImages, { ...props, images, align: 'left' }));
         }
-        function ImageParameters({ details, image, pending = false }) {
+        const recovering = new Set();
+        async function recoveryCommand(sessionId, command, callId) {
+          const response = await ctx.remote.commands.execute(sessionId, `/${command} ${callId}`, []);
+          if (!response.ok) throw new Error(response.error.message);
+          const result = response.value?.result;
+          if (result?.kind !== 'success') throw new Error(result?.text || t('failed'));
+          return result.text;
+        }
+        function RecoveryActions({ state, sessionId, useInput, useSession, inputActions, loadImage }) {
+          useCopy();
+          const input = useInput(s => s);
+          const running = useSession(s => s.running);
+          useOptions(sessionId);
+          const [pending, setPending] = React.useState(false);
+          const [message, setMessage] = React.useState('');
+          const [confirmation, setConfirmation] = React.useState(null);
+          const latest = React.useRef(); latest.current = { input, running, sessionId, callId: state.callId };
+          const alive = React.useRef(false);
+          React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+          const available = () => {
+            const now = latest.current;
+            if (!alive.current || now.sessionId !== sessionId || now.callId !== state.callId) throw new Error(t('recoverChanged'));
+            if (now.running || !editable(now.input)) throw new Error(t('unavailable'));
+            return now.input;
+          };
+          const fingerprint = value => JSON.stringify([value.draftRev, value.draft, value.attachmentIds, value.occurrences]);
+          async function run(action) {
+            if (recovering.has(sessionId)) return;
+            recovering.add(sessionId); setPending(true); setMessage('');
+            try { available(); await action(); }
+            catch (error) { if (alive.current) setMessage(error.message || t('failed')); }
+            finally { recovering.delete(sessionId); if (alive.current) setPending(false); }
+          }
+          async function restore(saved, replace = false) {
+            const before = available();
+            if (!replace && (before.draft.trim() || before.attachmentIds.length)) { setConfirmation(saved); return; }
+            setConfirmation(null);
+            if (catalog.status !== 'ready') throw new Error(t('optionsFailed'));
+            if (!Array.isArray(saved.references) || (saved.operation === 'edit' && !saved.references.length)) throw new Error(t('recoverIncomplete'));
+            const original = fingerprint(before);
+            const previousIds = [...before.attachmentIds];
+            const files = [];
+            // Read everything first. A missing reference must never silently
+            // turn an edit into a text-only generation, or replace half a draft.
+            for (const [index, reference] of saved.references.entries()) {
+              try {
+                if (!reference?.attachmentId || !['image/png', 'image/jpeg', 'image/webp'].includes(reference.mediaType)) throw new Error('Invalid reference');
+                const response = await fetch(await loadImage(reference), { signal: AbortSignal.timeout(30000) });
+                if (!response.ok) throw new Error('Unreadable reference');
+                files.push(new File([await response.blob()], reference.name || `reference-${index + 1}.${reference.mediaType === 'image/jpeg' ? 'jpg' : reference.mediaType.split('/')[1]}`, { type: reference.mediaType }));
+              } catch { throw new Error(t('referenceMissing', { index: index + 1 })); }
+            }
+            if (fingerprint(available()) !== original) throw new Error(t('recoverChanged'));
+            const drafts = ctx.conversation.createDrafts(sessionId, files);
+            if (drafts.length !== files.length || !inputActions.addAttachments(drafts.map(item => item.id))) {
+              ctx.conversation.releaseDraftAttachments(drafts); throw new Error(t('unavailable'));
+            }
+            for (const id of previousIds) { inputActions.removeAttachment(id); ctx.conversation.releaseDraftAttachment(id); }
+            select(sessionId, { model: saved.model ?? '', quality: saved.quality ?? '', size: saved.draft?.size ?? saved.size ?? '',
+              sizeMode: saved.draft?.sizeMode === 'prompt' ? 'prompt' : 'manual', recovery: true });
+            inputActions.setDraft({ text: `/draw ${saved.draft?.prompt ?? saved.prompt ?? ''}`, references: [], command: { token: '/draw' } });
+            inputActions.persistDraft?.();
+            setMessage(t('restored'));
+          }
+          const edit = () => run(async () => {
+            const original = fingerprint(available());
+            const saved = JSON.parse(await recoveryCommand(sessionId, 'image-recover', state.callId));
+            if (fingerprint(available()) !== original) throw new Error(t('recoverChanged'));
+            await restore(saved);
+          });
+          const retry = () => run(async () => {
+            setConfirmation(null);
+            await recoveryCommand(sessionId, 'image-retry', state.callId);
+            if (alive.current) setMessage(t('retried'));
+          });
+          const disabled = pending || running || !editable(input);
+          return h('div', { style: { marginTop: 12 } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
+              h('button', { type: 'button', style: buttonStyle, disabled, onClick: edit }, t(pending ? 'recoverBusy' : 'reedit')),
+              h('button', { type: 'button', style: buttonStyle, disabled, title: t('retryCost'), onClick: retry }, t('retryOriginal'))),
+            confirmation && h('div', { role: 'group', 'aria-label': t('replaceDraft'), style: { marginTop: 10 } },
+              h('div', null, t('replaceDraft')),
+              h('button', { type: 'button', style: buttonStyle, disabled, onClick: () => run(() => restore(confirmation, true)) }, t('replace')),
+              h('button', { type: 'button', style: buttonStyle, disabled: pending, onClick: () => setConfirmation(null) }, t('keepDraft'))),
+            message && h('div', { role: 'status', style: { fontSize: 12, marginTop: 8 } }, message));
+        }
+        function ImageParameters({ details, image, pending = false, missing = false }) {
           const attachment = image?.attachment;
           const actual = attachment?.width && attachment?.height ? `${attachment.width}x${attachment.height}` : details.size;
-          const value = item => item || t(pending ? 'configured' : 'unknown');
+          const value = item => item || t(pending && !missing ? 'configured' : 'unknown');
           return h('div', { style: { display: 'flex', gap: '6px 16px', flexWrap: 'wrap', fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '8px 0' } },
             h('span', null, `${t('model')}：${value(details.model)}`),
             h('span', null, `${t('quality')}：${value(details.quality)}`),
@@ -452,7 +556,7 @@ window.__ModuleLoader__.load({
           const versions = history.versions(snapshot);
           const own = versions.find(version => version.callId === state.callId);
           const others = versions.filter(version => version.callId !== state.callId);
-          const details = history.info(state.block, state.meta, state.args);
+          const details = history.info(state.block, state.meta, state.args, state.request);
           const parent = others.findLast(version => version.seq < state.seq && details.referenceIds.includes(version.image.attachment.attachmentId));
           const previous = others.findLast(version => version.seq < state.seq);
           const selected = others.find(version => version.key === selectedKey) ?? parent ?? previous ?? others[0];
@@ -470,9 +574,10 @@ window.__ModuleLoader__.load({
             h('div', { role: state.status === 'failed' ? 'alert' : 'status', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
               h('strong', null, t(status)), own && h('span', { style: { fontSize: 12 } }, label(own)),
               parent && h('span', { style: { fontSize: 12 } }, `${t('basedOn')}：${label(parent)}`)),
-            !succeeded && h(ImageParameters, { details, pending: true }),
+            !succeeded && h(ImageParameters, { details, pending: true, missing: !pending }),
             pending && h('div', { style: { padding: '28px 12px', borderRadius: 8, background: 'var(--dsw-alias-button-floating-fill)', fontSize: 13 } }, t('waitingImage')),
             !pending && !succeeded && h('div', { style: { fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 8 } }, state.status === 'failed' && details.text, state.status === 'failed' && details.text && '\n', t('noRetry')),
+            !pending && !succeeded && props.inputActions && h(RecoveryActions, { ...props, state }),
             succeeded && h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10 } },
               images.map((image, index) => h('div', { key: image.attachment.attachmentId, style: { flex: '1 1 260px', minWidth: 0 } }, imageView(image, details, `${t('currentVersion')}${images.length > 1 ? ` ${index + 1}` : ''}`))),
               compare && selected && imageView(selected.image, selected, label(selected))),

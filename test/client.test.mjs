@@ -11,15 +11,17 @@ function fixture(saved = new Map()) {
   const calls = [], slots = new Map(), events = new Map(), disposers = [], definitions = new Map(), registrations = new Map(), translations = {};
   let states = [], cursor = 0;
   const drafts = new Map();
+  let imageFetch = async url => ({ ok: true, blob: async () => new Blob([url]) });
+  const session = { running: false }, cleanups = [];
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
     Fragment: 'fragment', useSyncExternalStore: (_listen, read) => read(),
     useState: init => { const i = cursor++; if (!(i in states)) states[i] = init; return [states[i], value => { states[i] = value; }]; },
     useRef: init => { const i = cursor++; if (!(i in states)) states[i] = { current: init }; return states[i]; },
-    useEffect: callback => { callback(); },
+    useEffect: callback => { const cleanup = callback(); if (cleanup) cleanups.push(cleanup); },
   };
   const ctx = {
-    locale: { register: (_name, copy) => Object.assign(translations, copy), bind: () => key => key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
+    locale: { register: (_name, copy) => Object.assign(translations, copy), bind: () => (key, values) => values ? key + JSON.stringify(values) : key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
     effect: callback => { disposers.push(callback()); }, on: (name, callback) => events.set(name, callback),
     slots: { inject: (_name, callback) => callback(), register: (meta, component) => {
       // DSH's read-image-toolview already owns this declaration. Re-declaring
@@ -50,15 +52,15 @@ function fixture(saved = new Map()) {
     localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
     AbortSignal, File,
     fetch: async url => {
-      if (url.startsWith('fixture-image:')) return { ok: true, blob: async () => new Blob([url]) };
+      if (url.startsWith('fixture-image:')) return imageFetch(url);
       assert.equal(url, 'api/openai-image.options'); return { ok: true, json: () => new Promise(resolve => { resolveOptions = resolve; }) };
     },
   });
   const finish = async () => { await new Promise(resolve => setImmediate(resolve)); resolveOptions({ models: MODELS, qualities: QUALITIES, sizes: SIZE_PRESETS,
     defaults: { model: config.defaultModel, quality: config.quality, size: config.size, sizeMode: 'prompt' } }); await new Promise(resolve => setImmediate(resolve)); };
   const input = { draft: '/draw a landscape', draftRev: 1, phase: 'plain', attachmentIds: [], occurrences: [] };
-  const props = { sessionId: 'one', useInput: read => read(input), useSession: read => read({ running: false }), inputActions: {
-    setDraft: draft => { input.draft = draft.text; input.occurrences = draft.references; },
+  const props = { sessionId: 'one', useInput: read => read(input), useSession: read => read(session), inputActions: {
+    setDraft: draft => { input.draft = draft.text; input.draftRev++; input.occurrences = draft.references; },
     addAttachments: ids => { input.attachmentIds = [...input.attachmentIds, ...ids]; return true; },
     removeAttachment: id => { input.attachmentIds = input.attachmentIds.filter(item => item !== id); },
   } };
@@ -66,7 +68,8 @@ function fixture(saved = new Map()) {
   const all = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(all)];
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
   const renderComponent = (component, componentProps, fresh = false) => { if (fresh) states = []; cursor = 0; return component(componentProps); };
-  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts, translations };
+  return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts, translations,
+    ctx, session, setImageFetch: fn => imageFetch = fn, unmount: () => cleanups.forEach(fn => fn()) };
 }
 
 test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {
@@ -191,4 +194,106 @@ test('version comparison selects an old image and edit loads exactly that image 
   assert.equal(f.input.attachmentIds.length, 1);
   assert.equal(await f.drafts.get(f.input.attachmentIds[0]).file.text(), 'fixture-image:sha256:old');
   assert.equal(f.input.draft, '/draw a landscape');
+});
+
+async function recoveryFixture() {
+  const f = fixture(); await f.finish();
+  const saved = { version: 1, operation: 'edit', prompt: '图1在左，图2在中，图3在右，16:9', model: 'gpt-image-2.6-flare', quality: 'low', size: '1536x864',
+    draft: { prompt: ' 图1在左，图2在中，图3在右，16:9\n', size: '1024x1024', sizeMode: 'prompt' },
+    references: ['C', 'A', 'B'].map(id => ({ attachmentId: id, mediaType: 'image/png', name: `${id}.png` })), issues: [] };
+  const commandCalls = [];
+  f.ctx.remote.commands.execute = async (sessionId, line, attachments) => {
+    commandCalls.push({ sessionId, line, attachments });
+    return { ok: true, value: { result: { kind: 'success', text: line.startsWith('/image-recover') ? JSON.stringify(saved) : undefined } } };
+  };
+  const cardProps = { ...f.props, node: { data: { callId: 'failed', status: 'failed', operation: 'edit', request: saved } },
+    useConversation: read => read({ views: { get: () => ({ nodes: new Map() }) } }), loadImage: async ref => `fixture-image:${ref.attachmentId}` };
+  const card = f.renderComponent(f.registrations.get('openai-image-result').component, cardProps, true);
+  const actions = f.all(card).find(node => typeof node.type === 'function' && node.type.name === 'RecoveryActions');
+  assert.ok(actions, 'failed card exposes recovery actions');
+  let first = true;
+  const render = () => { const tree = f.renderComponent(actions.type, actions.props, first); first = false; return tree; };
+  const button = label => f.all(render()).find(node => node.type === 'button' && node.children.includes(label));
+  return { ...f, savedRequest: saved, commandCalls, renderActions: render, action: button };
+}
+
+test('re-edit asks before replacing, restores all three references in order and original draft settings, without generating', async () => {
+  const f = await recoveryFixture();
+  const [old] = f.ctx.conversation.createDrafts('one', [new File(['old'], 'old.png', { type: 'image/png' })]);
+  f.input.attachmentIds = [old.id];
+  await f.action('reedit').props.onClick();
+  assert.ok(f.action('replace'));
+  assert.equal(f.input.draft, '/draw a landscape');
+  f.action('keepDraft').props.onClick();
+  assert.deepEqual(f.input.attachmentIds, [old.id]); assert.ok(f.drafts.has(old.id));
+  await f.action('reedit').props.onClick();
+  await f.action('replace').props.onClick();
+  assert.equal(f.input.draft, '/draw ' + f.savedRequest.draft.prompt);
+  assert.deepEqual(await Promise.all(f.input.attachmentIds.map(id => f.drafts.get(id).file.text())), ['fixture-image:C', 'fixture-image:A', 'fixture-image:B']);
+  assert.ok(!f.drafts.has(old.id));
+  assert.ok(f.commandCalls.every(call => call.line === '/image-recover failed'));
+  const options = JSON.parse(f.saved.get('dsh.openaiImage.options.v1:one'));
+  assert.equal(options.model, f.savedRequest.model); assert.equal(options.quality, 'low');
+  assert.equal(options.sizeMode, 'prompt'); assert.equal(options.size, '1024x1024');
+  assert.deepEqual([...f.input.occurrences], []);
+});
+
+test('a missing middle reference, draft edits during reads, or unmount leave the original composer intact', async () => {
+  for (const scenario of ['missing', 'changed', 'unmount', 'admission']) {
+    const f = await recoveryFixture();
+    f.setImageFetch(async url => {
+      if (url.endsWith(':A')) {
+        if (scenario === 'missing') return { ok: false };
+        if (scenario === 'changed') { f.input.draft = 'new typing'; f.input.draftRev++; }
+        if (scenario === 'unmount') f.unmount();
+      }
+      return { ok: true, blob: async () => new Blob([url]) };
+    });
+    if (scenario === 'admission') f.props.inputActions.addAttachments = () => false;
+    await f.action('reedit').props.onClick();
+    await f.action('replace').props.onClick();
+    assert.equal(f.input.draft, scenario === 'changed' ? 'new typing' : '/draw a landscape');
+    assert.deepEqual(f.input.attachmentIds, []);
+    assert.equal(f.drafts.size, 0, 'no leaked partial attachment drafts');
+    if (scenario === 'missing') assert.match(JSON.stringify(f.renderActions()), /referenceMissing.*index.*2/);
+    assert.ok(f.commandCalls.every(call => call.line.startsWith('/image-recover')));
+  }
+});
+
+test('direct retry is single-flight and leaves unrelated text, references and selected settings untouched', async () => {
+  const f = await recoveryFixture();
+  const [draft] = f.ctx.conversation.createDrafts('one', [new File(['mine'], 'mine.png', { type: 'image/png' })]);
+  f.input.attachmentIds = [draft.id];
+  const previous = JSON.stringify(f.input);
+  let complete, calls = 0;
+  f.ctx.remote.commands.execute = async (_id, line) => {
+    assert.equal(line, '/image-retry failed'); calls++;
+    await new Promise(resolve => complete = resolve);
+    return { ok: true, value: { result: { kind: 'success' } } };
+  };
+  const retry = f.action('retryOriginal').props.onClick;
+  const pending = retry(); await retry(); assert.equal(calls, 1);
+  complete(); await pending;
+  assert.equal(JSON.stringify(f.input), previous);
+  assert.equal(f.saved.size, 0); assert.ok(f.drafts.has(draft.id));
+  assert.match(JSON.stringify(f.renderActions()), /retried/);
+  f.session.running = true;
+  assert.equal(f.action('retryOriginal').props.disabled, true);
+});
+
+test('incomplete legacy parameters restore as explicit blanks and cannot send using current defaults', async () => {
+  const f = await recoveryFixture();
+  delete f.savedRequest.quality;
+  delete f.savedRequest.size;
+  f.savedRequest.draft = { prompt: 'legacy', sizeMode: 'manual' };
+  f.savedRequest.references = [];
+  f.savedRequest.operation = 'generate';
+  f.savedRequest.issues = ['quality missing', 'size missing'];
+  await f.action('reedit').props.onClick(); await f.action('replace').props.onClick();
+  const claim = f.source.matchClaim({ sessionId: 'one' }, '/draw');
+  assert.equal((await claim.submit('legacy')).kind, 'error');
+  const recovered = JSON.parse(f.saved.get('dsh.openaiImage.options.v1:one'));
+  assert.equal(recovered.quality, ''); assert.equal(recovered.size, '');
+  const reload = fixture(f.saved); await reload.finish();
+  assert.equal((await reload.source.matchClaim({ sessionId: 'one' }, '/draw').submit('legacy')).kind, 'error');
 });

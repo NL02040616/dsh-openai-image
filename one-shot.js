@@ -1,10 +1,13 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { PROVIDER, commandRequest } from './core.js';
+import { PROVIDER, commandDraft, commandRequest, validateRequest } from './core.js';
+import { recoverRequest, recoveryIssues } from './recovery.js';
 
 // The marker is durable message metadata; it is never a hidden prompt prefix.
 export function installOneShot(ctx, config) {
   const requests = new WeakMap();
   const selections = new WeakMap();
+  const admitting = new WeakSet();
+  const busy = agent => admitting.has(agent) || agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length;
   const restoreSelection = agent => {
     const saved = selections.get(agent);
     if (!saved) return;
@@ -49,6 +52,50 @@ export function installOneShot(ctx, config) {
     return { ...rest, provider: PROVIDER, model: request.model };
   }, { prepend: true });
   ctx.inject(['commands'], scope => {
+    const enqueue = (agent, request, attachments, draft) => {
+      if (agent.model?.select) {
+        const previous = agent.model.current();
+        if (!previous) return { kind: 'error', text: '请先选择聊天模型，再开始画图。' };
+        selections.set(agent, { previous, imageModel: request.model });
+        agent.model.select({ provider: PROVIDER, model: request.model });
+      }
+      try {
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: request.prompt }, ...attachments],
+          source: { kind: 'user', openaiImage: { version: 1, model: request.model, quality: request.quality, size: request.size, draft } },
+        }));
+      } catch (error) { restoreSelection(agent); throw error; }
+      return { kind: 'success' };
+    };
+    scope.commands.register({
+      name: 'image-recover', description: '读取指定画图记录的提示词、参数和有序参考图，不生成图片',
+      input: { hint: '画图记录 ID' }, recordInput: false,
+      handler: ({ agent, rawInput }) => ({ kind: 'success', text: JSON.stringify(recoverRequest(agent.session.log, rawInput.trim())) }),
+    });
+    scope.commands.register({
+      name: 'image-retry', description: '按指定画图记录的原参数和参考图重新生成一次图片（会计费）',
+      input: { hint: '画图记录 ID' }, recordInput: false,
+      handler: async ({ agent, rawInput, signal }) => {
+        signal?.throwIfAborted();
+        if (busy(agent)) return { kind: 'error', text: '请等待当前回复完成后再画图。' };
+        admitting.add(agent);
+        try {
+          const saved = recoverRequest(agent.session.log, rawInput.trim());
+          const issues = recoveryIssues(saved);
+          if (issues.length) return { kind: 'error', text: `${issues.join('；')}。请先重新编辑并补全，未发送生图请求。` };
+          // Pin the recorded effective size. Re-evaluating the prompt or current
+          // defaults here would make a retry a different request.
+          const request = validateRequest({ prompt: saved.prompt, model: saved.model, quality: saved.quality, size: saved.size, sizeMode: 'manual' }, config);
+          for (const [index, reference] of saved.references.entries()) {
+            try { await ctx.attachments.readImage(reference, signal); }
+            catch { signal?.throwIfAborted(); return { kind: 'error', text: `参考图 ${index + 1} 已不可读取，请重新编辑并补充。未发送生图请求。` }; }
+          }
+          signal?.throwIfAborted();
+          if (agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length) return { kind: 'error', text: '会话已有新请求，请等待完成后再重试。' };
+          return enqueue(agent, request, saved.references.map(attachment => ({ type: 'image', attachment })), saved.draft ?? { prompt: saved.prompt, size: saved.size, sizeMode: 'manual' });
+        } finally { admitting.delete(agent); }
+      },
+    });
     scope.commands.register({
       name: 'image',
       description: '本次画图：生成新图片，或修改输入框中附带的参考图',
@@ -56,7 +103,7 @@ export function installOneShot(ctx, config) {
       recordInput: false,
       handler: ({ agent, rawInput, attachments, signal }) => {
         signal?.throwIfAborted();
-        if (agent.status !== 'idle' || agent.inbox.nextTurn.length || agent.inbox.nextStep.length) {
+        if (busy(agent)) {
           return { kind: 'error', text: '请等待当前回复完成后再画图。描述和参考图已保留。' };
         }
         if (attachments.some(block => block.type !== 'image')) {
@@ -66,17 +113,7 @@ export function installOneShot(ctx, config) {
           return { kind: 'error', text: '请使用不超过 16 张 PNG、JPEG 或 WebP 参考图。' };
         }
         const request = commandRequest(rawInput, config);
-        if (agent.model?.select) {
-          const previous = agent.model.current();
-          if (!previous) return { kind: 'error', text: '请先选择聊天模型，再开始画图。' };
-          selections.set(agent, { previous, imageModel: request.model });
-          agent.model.select({ provider: PROVIDER, model: request.model });
-        }
-        agent.followup(createUserMessage({
-          content: [{ type: 'text', text: request.prompt }, ...attachments],
-          source: { kind: 'user', openaiImage: { version: 1, model: request.model, quality: request.quality, size: request.size } },
-        }));
-        return { kind: 'success' };
+        return enqueue(agent, request, attachments, commandDraft(rawInput, config));
       },
     });
   });

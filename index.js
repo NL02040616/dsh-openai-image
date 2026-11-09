@@ -3,9 +3,11 @@ import z from '@deepseek-ai/schemastery';
 import { LlmAdapter, LlmError, attributionHeaders, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { appendPluginRecord } from '@deepseek-ai/dsh-session';
 import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZE_PRESETS, generateImage, isTitleRequest, referenceImages, requestFromMessages, textChunks } from './core.js';
 import { installOneShot } from './one-shot.js';
 import { createImageFetch } from './transport.js';
+import { REQUEST_RECORD, requestSnapshot } from './recovery.js';
 
 export const name = 'openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
@@ -40,6 +42,14 @@ export function apply(ctx, config) {
     return value;
   };
   ctx.effect(() => () => lifetime.abort(new Error('OpenAI 生图插件已停用。')));
+
+  const remember = (args, exec, references, operation) => {
+    const user = exec.agent.session.deriveMessages().findLast(message => message.role === 'user' && message.source?.kind === 'user');
+    const draft = isImageCall(exec) && user?.source?.openaiImage?.version === 1 ? user.source.openaiImage.draft : undefined;
+    appendPluginRecord(exec.agent.session, REQUEST_RECORD, {
+      callId: exec.callId, request: requestSnapshot(args, config, references, operation, draft),
+    });
+  };
 
   const generate = async (args, signal, references = []) => {
     try {
@@ -132,7 +142,10 @@ export function apply(ctx, config) {
     output,
     timeoutMs: config.timeoutMs + 30000,
     isConcurrencySafe: () => false,
-    execute: async (args, exec) => finishImageCall(exec, await generate(args, exec.signal)),
+    execute: async (args, exec) => {
+      remember(args, exec, [], 'generate');
+      return finishImageCall(exec, await generate(args, exec.signal));
+    },
   }));
   ctx.tools.register(defineTool({
     name: 'openai_edit_image',
@@ -144,6 +157,7 @@ export function apply(ctx, config) {
     execute: async (args, exec) => {
       const messages = exec.agent?.session?.deriveMessages() ?? [];
       const references = isImageCall(exec) ? requestFromMessages(messages).references : referenceImages(messages);
+      remember(args, exec, references, 'edit');
       if (!references.length) throw new LlmError('当前对话中没有可编辑的参考图，请先上传 PNG、JPEG 或 WebP 图片。', 'INVALID_REQUEST');
       return finishImageCall(exec, await generate(args, exec.signal, references));
     },

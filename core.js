@@ -14,9 +14,9 @@ export const QUALITIES = ['low', 'medium', 'high'];
 // A command transport envelope, removed before constructing the user message.
 // Ordinary /image text continues to use the configured defaults.
 export const OPTIONS_PREFIX = '@dsh-image-options-v1 ';
-export function commandRequest(rawInput, config) {
+function commandArgs(rawInput) {
   const text = rawInput.trimStart();
-  if (!text.startsWith(OPTIONS_PREFIX)) return validateRequest({ prompt: rawInput, sizeMode: 'prompt' }, config);
+  if (!text.startsWith(OPTIONS_PREFIX)) return { prompt: rawInput, sizeMode: 'prompt' };
   let args;
   try { args = JSON.parse(text.slice(OPTIONS_PREFIX.length)); } catch {
     throw new ImageGenerationError('无法读取本次画图参数，请重新选择模型、画质和尺寸。', 'INVALID_REQUEST');
@@ -24,7 +24,20 @@ export function commandRequest(rawInput, config) {
   if (!args || typeof args !== 'object' || !['model', 'quality', 'size', 'prompt'].every(key => typeof args[key] === 'string')) {
     throw new ImageGenerationError('本次画图参数不完整，请重新选择模型、画质和尺寸。', 'INVALID_REQUEST');
   }
-  return validateRequest(args, config);
+  return args;
+}
+export function commandRequest(rawInput, config) {
+  return validateRequest(commandArgs(rawInput), config);
+}
+export function commandDraft(rawInput, config) {
+  const args = commandArgs(rawInput);
+  const size = args.draftSize ?? args.size ?? config.size;
+  const sizeMode = args.draftSizeMode ?? args.sizeMode ?? (args.size ? 'manual' : 'prompt');
+  if (typeof size !== 'string' || !size.trim() || size.length > 30 || !['manual', 'prompt'].includes(sizeMode)) {
+    throw new ImageGenerationError('无法保存本次尺寸选项，请重新选择尺寸。', 'INVALID_REQUEST');
+  }
+  return { prompt: args.prompt, model: args.model ?? config.defaultModel, quality: args.quality ?? config.quality,
+    size, sizeMode };
 }
 const API_ROOT = 'https://api.openai.com/v1/images/';
 const NEW_IMAGE_PREFIX = /^(?:新建图片\s*[:：]\s*|\/new(?:\s+|$))/i;
@@ -119,11 +132,15 @@ function failureCode(status, apiCode) {
   return 'INVALID_REQUEST';
 }
 
-/** One generation or edit, without automatic retries or credential persistence. */
-export async function generateImage({ args, config, references = [], resolveKey, readImage, saveImage, headers = {}, signal, fetchImpl = fetch }) {
+/** Resolve effective parameters identically for the durable record and API call. */
+export function imageRequest(args, config, references = []) {
   const first = references[0];
   const editSize = first && first.width > first.height ? '1536x1024' : first && first.height > first.width ? '1024x1536' : config.size;
-  const body = validateRequest({ ...args, size: args.size ?? editSize, sizeMode: args.sizeMode ?? (args.size ? 'manual' : 'prompt') }, config);
+  return validateRequest({ ...args, size: args.size ?? editSize, sizeMode: args.sizeMode ?? (args.size ? 'manual' : 'prompt') }, config);
+}
+/** One generation or edit, without automatic retries or credential persistence. */
+export async function generateImage({ args, config, references = [], resolveKey, readImage, saveImage, headers = {}, signal, fetchImpl = fetch }) {
+  const body = imageRequest(args, config, references);
   signal?.throwIfAborted();
   if (references.length > 16) throw new ImageGenerationError('一次最多使用 16 张参考图，请减少本次上传的图片。', 'INVALID_REQUEST');
   if (references.length) {
