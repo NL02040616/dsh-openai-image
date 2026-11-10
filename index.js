@@ -11,6 +11,7 @@ import { installOneShot } from './one-shot.js';
 import { createImageFetch } from './transport.js';
 import { REQUEST_RECORD, requestSnapshot } from './recovery.js';
 import { createUpdateChecker, createUpdateFetch } from './updates.js';
+import { installUpdateRoute } from './install-update.js';
 
 export const name = 'openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
@@ -40,6 +41,7 @@ export function apply(ctx, config) {
   let dshVersion = null;
   try { dshVersion = JSON.parse(readFileSync(createRequire(import.meta.url).resolve('@deepseek-ai/dsh-llm/package.json'), 'utf8')).version; } catch {}
   const updates = createUpdateChecker({ currentVersion, dshVersion, fetchImpl: createUpdateFetch(config), signal: lifetime.signal });
+  const updater = installUpdateRoute(ctx, { currentVersion, dshVersion, config, updates });
   ctx.inject(['connection'], scope => {
     // Publish only the non-secret choices. Never expose the full plugin config.
     // Connection's exact /api routes enforce authenticated owner access on both
@@ -71,6 +73,9 @@ export function apply(ctx, config) {
   };
 
   const generate = async (args, signal, references = []) => {
+    if (updater.busy) throw new LlmError('插件正在更新，请完成后再生成图片。', 'PLUGIN_UPDATING');
+    if (updater.state?.phase === 'restart-required' || updater.state?.restartRequired) throw new LlmError('插件安装已完成，请完整退出并重启 DSH 后再生成图片。', 'PLUGIN_RESTART_REQUIRED');
+    updater.activeImages++;
     try {
       return await generateImage({
         args, config, references, fetchImpl,
@@ -85,6 +90,8 @@ export function apply(ctx, config) {
         throw new LlmError(error.message, error.code, error.status ? { status: error.status } : undefined);
       }
       throw error;
+    } finally {
+      updater.activeImages--;
     }
   };
 

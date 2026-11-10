@@ -151,7 +151,7 @@ window.__ModuleLoader__.load({
   }
   return { kind, definition, info, images, versions };
 })();
-    const installedVersion = "1.7.1";
+    const installedVersion = "1.8.0";
     const createUpdateClient = function createUpdateClient({ currentVersion, fetcher, storage, now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout }) {
   const interval = 86400000, key = `dsh.openaiImage.updates.v1:${currentVersion}`;
@@ -257,8 +257,13 @@ window.__ModuleLoader__.load({
         upToDate: '已是最新版本', notChecked: '启动后会自动检查，也可立即手动检查。', closeUpdate: '收起',
         copyGitee: '复制 Gitee 安装地址', copyGithub: '复制 GitHub 安装地址', copied: '已复制安装地址', copyFailed: '复制失败，请选中下方地址后复制。',
         openPlugins: '打开插件管理器', ignoreUpdate: '忽略此版本', updateIgnored: '已忽略此版本的提醒',
+        installUpdate: '一键更新到', preserveConfig: '保留原配置', updatePreparing: '正在下载和校验安装包…', updateInstalling: '正在安装新版，请保持 DSH 开启…',
+        updateRestoring: '安装未完成，正在恢复旧版…', updateCompleted: '更新完成，原配置已保留。', updateRestart: '新版已安装，原配置已保留。请完整退出并重启 DSH。',
+        updateRestored: '更新未完成，已恢复旧版及原配置。可稍后重试。', restoreRestart: '请完整退出并重启 DSH，完成旧版加载。', updateRecovery: '更新未完成，请打开插件管理器恢复下方本地备份；原配置未删除。',
+        updateStopped: '下载或校验未通过，旧版保持不变。请检查网络后重试。', updateStartFailed: '未能开始更新。可能有图片正在生成，或版本信息已变化；请检查更新后重试。',
+        updateProgressLost: '暂时无法读取更新进度，请保持 DSH 开启，在插件管理器中查看结果。',
         compatibleDsh: '兼容当前 DSH', incompatibleDsh: '与当前 DSH 不兼容，请先核对并更新 DSH。', unknownDsh: '无法确认当前 DSH 版本，请先核对兼容性。',
-        supportedDsh: '支持的 DSH 版本', updateInstructions: '在插件管理器中添加此安装地址；若提示已有副本，先记录自定义配置，再卸载旧副本并安装新版。按提示完整退出重启。',
+        supportedDsh: '支持的 DSH 版本', updateInstructions: '点击一键更新即可保留配置安装新版，无需复制地址或手动卸载。安装失败时会尝试恢复旧版；仅在提示需要时重启 DSH。',
         updateDuringImage: '图片正在生成，完成后再打开插件管理器更新。', updatePrivacy: '每天最多自动检查一次，优先 Gitee、GitHub 备用。只读取公开版本信息，不发送密钥或对话，不自动安装。',
       },
       en: {
@@ -300,8 +305,13 @@ window.__ModuleLoader__.load({
         upToDate: 'Up to date', notChecked: 'An automatic check will run shortly. You can also check now.', closeUpdate: 'Close',
         copyGitee: 'Copy Gitee install URL', copyGithub: 'Copy GitHub install URL', copied: 'Install URL copied', copyFailed: 'Copy failed. Select and copy the URL below.',
         openPlugins: 'Open plugin manager', ignoreUpdate: 'Ignore this version', updateIgnored: 'Reminders for this version are ignored',
+        installUpdate: 'Update to', preserveConfig: 'Keep settings', updatePreparing: 'Downloading and verifying the package…', updateInstalling: 'Installing the update. Keep DSH open…',
+        updateRestoring: 'Installation did not finish. Restoring the previous version…', updateCompleted: 'Update complete. Settings retained.', updateRestart: 'Update installed with settings retained. Fully quit and restart DSH.',
+        updateRestored: 'Update did not finish. Previous version and settings restored. Try again later.', restoreRestart: 'Fully quit and restart DSH to load the restored version.', updateRecovery: 'Update did not finish. Open the plugin manager and install the local backup below. Settings have not been deleted.',
+        updateStopped: 'Download or verification failed. The previous version is unchanged. Check the network and try again.', updateStartFailed: 'Could not start. Image creation may be active or the release may have changed. Check for updates and try again.',
+        updateProgressLost: 'Progress is temporarily unavailable. Keep DSH open and check the plugin manager for the result.',
         compatibleDsh: 'Compatible with your DSH', incompatibleDsh: 'Incompatible with your DSH. Check and update DSH first.', unknownDsh: 'Your DSH version could not be determined. Check compatibility first.',
-        supportedDsh: 'Supported DSH versions', updateInstructions: 'Add this URL in the plugin manager. If a copy is already installed, record custom settings, uninstall it and install the new version. Fully restart when prompted.',
+        supportedDsh: 'Supported DSH versions', updateInstructions: 'One click installs the update while keeping settings. Failed installations attempt to restore the previous version. Restart only when prompted.',
         updateDuringImage: 'Wait for image creation to finish before opening the plugin manager to update.', updatePrivacy: 'Automatic checks run at most daily, using Gitee with GitHub as fallback. Only public version information is fetched. No keys or conversations are sent, and nothing is installed automatically.',
       },
     };
@@ -326,11 +336,56 @@ window.__ModuleLoader__.load({
           openPluginManager = () => scope.pluginNavigation.openBundle('dsh-openai-image');
           scope.effect(() => () => { openPluginManager = undefined; });
         });
+        async function startUpdate(version) {
+          const response = await fetch('api/openai-image.install-update', { method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-dsh-image-update': '1' }, body: JSON.stringify({ version }), signal: AbortSignal.timeout(25000) });
+          if (!response.ok) throw new Error('start-failed');
+          const initial = await response.json();
+          // This temporary root-owned UI outlives replacement of this bundle.
+          // It never changes the input draft, attachments, or model selection.
+          const labels = Object.fromEntries(['updateTitle', 'updatePreparing', 'updateInstalling', 'updateRestoring', 'updateCompleted', 'updateRestart',
+            'updateRestored', 'restoreRestart', 'updateRecovery', 'updateStopped', 'updateProgressLost', 'closeUpdate'].map(key => [key, t(key)]));
+          const phaseLabel = { preparing: 'updatePreparing', installing: 'updateInstalling', restoring: 'updateRestoring', completed: 'updateCompleted',
+            'restart-required': 'updateRestart', restored: 'updateRestored', 'recovery-required': 'updateRecovery', failed: 'updateStopped' };
+          const activePhase = phase => ['preparing', 'installing', 'restoring'].includes(phase);
+          const progressKey = Symbol.for('dsh.openaiImage.updateProgress.v1');
+          if (window[progressKey]) await window[progressKey].dispose();
+          const fiber = ctx.root.plugin({ name: 'openai-image-update-progress', inject: ['slots'], apply(progressCtx) {
+            let snapshot = initial, timer, stopped = false, failures = 0;
+            const listeners = new Set(), controller = new AbortController();
+            const emit = value => { snapshot = value; for (const listener of listeners) listener(); };
+            const poll = async () => {
+              try {
+                const status = await fetch('api/openai-image.update-job', { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) });
+                if (!status.ok) throw new Error();
+                const value = await status.json();
+                if (!phaseLabel[value.phase]) throw new Error();
+                if (!stopped) { failures = 0; emit(value); }
+              } catch { if (!stopped && ++failures >= 3) emit({ ...snapshot, lost: true }); }
+              if (!stopped && activePhase(snapshot.phase)) timer = setTimeout(poll, 1500);
+            };
+            function Progress() {
+              const value = React.useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener); }, () => snapshot);
+              return h('section', { role: 'status', 'aria-label': labels.updateTitle, style: { ...buttonStyle, padding: 12, margin: '8px auto', maxWidth: 736, cursor: 'default' } },
+                h('strong', null, `${labels.updateTitle} · ${initial.from} → ${initial.to}`),
+                h('p', null, labels[value.lost ? 'updateProgressLost' : phaseLabel[value.phase]]),
+                value.restartRequired && h('p', null, labels.restoreRestart),
+                value.phase === 'recovery-required' && value.previousPath && h('input', { readOnly: true, value: value.previousPath, style: { width: '100%' }, onFocus: event => event.target.select() }),
+                (!activePhase(value.phase) || value.lost) && h('button', { type: 'button', style: buttonStyle, onClick: () => { void progressCtx.fiber.dispose(); } }, labels.closeUpdate));
+            }
+            progressCtx.slots.inject('conversation.input.dock', () => progressCtx.slots.register({ name: 'conversation.input.dock', id: 'openai-image-update-progress', order: 15 }, Progress));
+            timer = setTimeout(poll, 100);
+            progressCtx.effect(() => () => { stopped = true; clearTimeout(timer); controller.abort(); listeners.clear(); });
+          } });
+          window[progressKey] = fiber;
+          updates.close();
+        }
         function UpdatePanel({ useSession }) {
           useCopy();
           const state = React.useSyncExternalStore(updates.subscribe, updates.getSnapshot);
           const running = useSession(s => s.running);
           const [message, setMessage] = React.useState('');
+          const [installing, setInstalling] = React.useState(false);
           if (!state.open) return null;
           const result = state.result, release = result?.release;
           const newer = result?.status === 'available';
@@ -352,6 +407,11 @@ window.__ModuleLoader__.load({
               h('ul', null, notes.map((line, i) => h('li', { key: i }, line))),
               newer && h('div', null,
                 h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                  h('button', { type: 'button', style: buttonStyle, disabled: running || installing || result.compatibility !== 'compatible', onClick: async () => {
+                    setInstalling(true); setMessage('');
+                    try { await startUpdate(release.version); } catch { setMessage(t('updateStartFailed')); }
+                    finally { setInstalling(false); }
+                  } }, `${t('installUpdate')} ${release.version}（${t('preserveConfig')}）`),
                   ...['gitee', 'github'].map(source => h('button', { key: source, type: 'button', style: buttonStyle, disabled: result.compatibility !== 'compatible', onClick: () => copy(release.links[source]) }, t(source === 'gitee' ? 'copyGitee' : 'copyGithub'))),
                   h('button', { type: 'button', style: buttonStyle, disabled: running || !openPluginManager, onClick: () => { openPluginManager?.(); updates.close(); } }, t('openPlugins')),
                   h('button', { type: 'button', style: buttonStyle, onClick: updates.ignore }, t('ignoreUpdate'))),

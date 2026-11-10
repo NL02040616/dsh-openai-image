@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { MODELS, QUALITIES, SIZE_PRESETS, commandRequest } from '../core.js';
 import { validateRelease } from '../updates.js';
 const code = await readFile(new URL('../client.js', import.meta.url), 'utf8');
+const installedVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 function fixture(saved = new Map()) {
   const config = { defaultModel: 'gpt-image-2.5-sunburst', quality: 'high', size: '1024x1536' };
@@ -14,8 +15,9 @@ function fixture(saved = new Map()) {
   const drafts = new Map();
   let imageFetch = async url => ({ ok: true, blob: async () => new Blob([url]) });
   const session = { running: false }, cleanups = [];
-  const updateCalls = [], timers = [], copies = [], navigations = [];
-  let updateFetch = async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.1', status: 'error' }) });
+  const updateCalls = [], timers = [], copies = [], navigations = [], installCalls = [], rootDisposers = [];
+  let job = { phase: 'preparing', from: installedVersion, to: '1.99.0' };
+  let updateFetch = async () => ({ ok: true, json: async () => ({ currentVersion: installedVersion, status: 'error' }) });
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
     Fragment: 'fragment', useSyncExternalStore: (_listen, read) => read(),
@@ -44,6 +46,11 @@ function fixture(saved = new Map()) {
     inputTriggers: { registerSource: value => { source = value; return () => {}; } },
     remote: { commands: { execute: async (id, line, attachments) => { calls.push({ id, request: commandRequest(line.slice(7), config), attachments }); return { ok: true, value: { result: { kind: 'success' } } }; } } },
   };
+  ctx.root = { plugin(plugin) {
+    const own = [], fiber = { dispose: () => own.forEach(fn => fn?.()) };
+    const rootScope = { ...ctx, fiber, effect: callback => own.push(callback()) };
+    plugin.apply(rootScope); rootDisposers.push(fiber.dispose); return fiber;
+  } };
   vm.runInNewContext(code, {
     window: { __ModuleLoader__: { load: module => {
       const plugin = module.factory(name => { assert.equal(name, 'react'); return React; });
@@ -59,7 +66,9 @@ function fixture(saved = new Map()) {
     AbortSignal, AbortController, File,
     setTimeout: (callback, ms) => { const item = { callback, ms }; timers.push(item); return item; }, clearTimeout: () => {},
     navigator: { clipboard: { writeText: async text => copies.push(text) } },
-    fetch: async url => {
+    fetch: async (url, init) => {
+      if (url === 'api/openai-image.install-update') { installCalls.push(init); return { ok: true, json: async () => job }; }
+      if (url === 'api/openai-image.update-job') return { ok: true, json: async () => job };
       if (url.startsWith('fixture-image:')) return imageFetch(url);
       if (url.startsWith('api/openai-image.updates')) { updateCalls.push(url); return updateFetch(url); }
       assert.equal(url, 'api/openai-image.options'); return { ok: true, json: () => new Promise(resolve => { resolveOptions = resolve; }) };
@@ -78,14 +87,14 @@ function fixture(saved = new Map()) {
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
   const renderComponent = (component, componentProps, fresh = false) => { if (fresh) states = []; cursor = 0; return component(componentProps); };
   return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts, translations,
-    ctx, session, timers, copies, navigations, updateCalls, setUpdateFetch: fn => updateFetch = fn,
+    ctx, session, timers, copies, navigations, updateCalls, installCalls, setJob: value => { job = value; }, rootDisposers, setUpdateFetch: fn => updateFetch = fn,
     setImageFetch: fn => imageFetch = fn, unmount: () => [...cleanups, ...disposers].forEach(fn => { if (typeof fn === 'function') fn(); }) };
 }
 
 test('update badge, manual check, copy, ignore and manager navigation never change image drafts or send commands', async () => {
   const f = fixture(); await f.finish();
-  const reply = { currentVersion: '1.7.1', status: 'available', source: 'Gitee', compatibility: 'compatible',
-    release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '1.8.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
+  const reply = { currentVersion: installedVersion, status: 'available', source: 'Gitee', compatibility: 'compatible',
+    release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '1.99.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
       dshVersions: ['0.2.2-rc.1'], notes: { zh: ['测试说明'], en: ['Test notes'] } }) };
   f.setUpdateFetch(async () => ({ ok: true, json: async () => reply }));
   const draw = () => f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true);
@@ -119,7 +128,7 @@ test('incompatible release disables installation copying, errors remain in updat
   const draw = f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true);
   f.all(draw).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
   const check = () => f.all(panel()).find(n => n.type === 'button' && n.children.includes('checkUpdate')).props.onClick();
-  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.1', status: 'available', source: 'GitHub', compatibility: 'incompatible',
+  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: installedVersion, status: 'available', source: 'GitHub', compatibility: 'incompatible',
     release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '2.0.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
       dshVersions: ['0.3.0'], notes: { zh: ['需要新版'], en: ['Needs a newer DSH'] } }) }) }));
   await check(); assert.ok(JSON.stringify(panel()).includes('incompatibleDsh'));
@@ -128,6 +137,31 @@ test('incompatible release disables installation copying, errors remain in updat
   assert.ok(JSON.stringify(panel()).includes('updateFailed'));
   assert.equal((await f.source.matchClaim({ sessionId: 'one' }, '/draw').submit('cat')).kind, 'success');
   f.unmount();
+});
+
+test('one-click submits only the selected version and progress survives old UI disposal without changing drafts', async () => {
+  const f = fixture(); await f.finish();
+  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: installedVersion, status: 'available', source: 'Gitee', compatibility: 'compatible',
+    release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '1.99.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
+      dshVersions: ['0.2.2-rc.1'], notes: { zh: ['更新'], en: ['Update'] } }) }) }));
+  await f.timers[0].callback(); await new Promise(resolve => setImmediate(resolve));
+  f.all(f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true)).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
+  const panel = () => f.renderComponent(f.registrations.get('openai-image-updates').component, f.props, true);
+  const button = () => f.all(panel()).find(n => n.type === 'button' && n.children.some(s => typeof s === 'string' && s.startsWith('installUpdate')));
+  f.session.running = true; assert.equal(button().props.disabled, true); f.session.running = false;
+  const before = JSON.stringify(f.input);
+  await button().props.onClick();
+  assert.equal(f.installCalls.length, 1); assert.equal(f.installCalls[0].method, 'POST');
+  assert.deepEqual(JSON.parse(f.installCalls[0].body), { version: '1.99.0' });
+  assert.equal(f.installCalls[0].headers['x-dsh-image-update'], '1');
+  const component = f.registrations.get('openai-image-update-progress').component;
+  assert.ok(JSON.stringify(f.renderComponent(component, f.props, true)).includes('updatePreparing'));
+  f.unmount();
+  f.setJob({ phase: 'completed', from: installedVersion, to: '1.99.0' });
+  await f.timers.at(-1).callback();
+  assert.ok(JSON.stringify(f.renderComponent(component, f.props, true)).includes('updateCompleted'));
+  assert.equal(JSON.stringify(f.input), before); assert.equal(f.calls.length, 0);
+  f.rootDisposers.forEach(dispose => dispose());
 });
 
 test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {

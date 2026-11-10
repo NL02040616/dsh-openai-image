@@ -1,24 +1,24 @@
 {
   "schema": 1,
   "package": "dsh-openai-image",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "publishedAt": "2026-11-10",
-  "sha256": "b1370f7df8174c15f5654ef17b05ac76a1965445ea10143dd6e5c772b88e8939",
+  "sha256": "46f9105c2dabe5ade7abcefe63c2faccfcc97727dfaeae5a222403b33809991c",
   "dshVersions": [
     "0.2.2-rc.1"
   ],
   "notes": {
     "zh": [
-      "新增插件更新提醒：每天自动检查，优先 Gitee，GitHub 备用。",
-      "画图按钮旁可查看新版本、更新说明和 DSH 兼容性，复制安装地址或忽略此版本。",
-      "提供手动检查和插件管理器入口；检查失败不影响生图，不自动安装。",
-      "修复 Gitee 文件域名签名跳转的兼容问题，Windows 系统代理通道已实测读取成功。"
+      "新增一键更新：无需复制链接或手动卸载，保留模型、画质、尺寸、代理配置和密钥引用。",
+      "下载后校验 SHA-256、版本与兼容性，安装失败时尝试恢复本地旧版包。",
+      "更新进度独立显示，生图时不能更新，重复点击不会重复安装。",
+      "核对实际加载版本；必要时提示完整重启 DSH，不自动重启。1.7.1 及更早版本需先安装本版一次。"
     ],
     "en": [
-      "Adds daily update checks with Gitee first and GitHub as fallback.",
-      "Shows new versions, release notes and DSH compatibility beside Draw, with install links and an ignore option.",
-      "Includes manual checks and plugin manager navigation; failures do not block image creation, and updates are never installed automatically.",
-      "Supports Gitee signed file redirects, verified with the Windows system proxy transport."
+      "Adds one-click updates without copying links or manual removal, retaining model, quality, size, proxy settings and credential references.",
+      "Verifies SHA-256, package version and compatibility before installation, and attempts local rollback on failure.",
+      "Progress survives plugin replacement; active image requests and duplicate installations are protected.",
+      "Checks the actually loaded version and requests a full DSH restart only when needed. Versions up to 1.7.1 require one manual upgrade to this release."
     ]
   }
 }

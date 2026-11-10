@@ -14,7 +14,10 @@ try {
     $uri = [Uri]$packet.url
     $updateUrls = @('https://gitee.com/un-important/dsh-openai-image/raw/main/latest.json', 'https://raw.githubusercontent.com/NL02040616/dsh-openai-image/main/latest.json')
     $isUpdateFile = $uri.Scheme -eq 'https' -and $uri.Host -eq 'raw.giteeusercontent.com' -and $uri.Port -eq 443 -and !$uri.UserInfo -and !$uri.Fragment -and $uri.AbsolutePath -ceq '/un-important/dsh-openai-image/raw/main/latest.json'
-    $isUpdate = ($updateUrls -ccontains [string]$packet.url) -or $isUpdateFile
+    $isPackage = $uri.Scheme -eq 'https' -and $uri.Port -eq 443 -and !$uri.UserInfo -and !$uri.Fragment -and (
+        (($uri.Host -eq 'gitee.com' -or $uri.Host -eq 'raw.giteeusercontent.com') -and $uri.AbsolutePath -cmatch '^/un-important/dsh-openai-image/raw/main/dsh-openai-image-\d+\.\d+\.\d+\.tgz$') -or
+        ($uri.Host -eq 'raw.githubusercontent.com' -and $uri.AbsolutePath -cmatch '^/NL02040616/dsh-openai-image/main/dsh-openai-image-\d+\.\d+\.\d+\.tgz$'))
+    $isUpdate = ($updateUrls -ccontains [string]$packet.url) -or $isUpdateFile -or $isPackage
     if ($isUpdate -and ($packet.method -cne 'GET' -or $packet.body -or @($packet.headers.PSObject.Properties | Where-Object { $_.Name -ine 'accept' }).Count -gt 0)) {
         throw 'Unsupported update request'
     }
@@ -65,6 +68,18 @@ try {
         if ($null -eq $_.Exception.Response) { throw }
         $response = $_.Exception.Response
     }
+    if ($isPackage -or ($uri.IsLoopback -and $packet.responseType -eq 'bytes')) {
+        $inputStream = $response.GetResponseStream()
+        $memory = New-Object IO.MemoryStream
+        try {
+            $buffer = New-Object byte[] 8192
+            while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                if ($memory.Length + $count -gt 2MB) { throw 'RESPONSE_TOO_LARGE' }
+                $memory.Write($buffer, 0, $count)
+            }
+            @{ status = [int]$response.StatusCode; base64 = [Convert]::ToBase64String($memory.ToArray()); location = $response.Headers['Location'] } | ConvertTo-Json -Compress
+        } finally { $inputStream.Dispose(); $memory.Dispose() }
+    } else {
     $reader = New-Object IO.StreamReader($response.GetResponseStream(), [Text.Encoding]::UTF8)
     try {
         $body = New-Object Text.StringBuilder
@@ -78,6 +93,7 @@ try {
         if ($isUpdate) { $result.location = $response.Headers['Location'] }
         $result | ConvertTo-Json -Compress
     } finally { $reader.Dispose() }
+    }
 } catch {
     $errorCode = 'TRANSPORT'
     $status = 0

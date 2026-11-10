@@ -58,6 +58,7 @@ export async function windowsFetch(url, options, config, { spawnImpl = spawn } =
     proxyUrl: config.proxyUrl?.trim() || '',
     proxyUseDefaultCredentials: config.proxyUseDefaultCredentials === true,
     maxResponseBytes: options.maxResponseBytes ?? 50 * 1024 * 1024,
+    responseType: options.responseType,
   };
   const result = await new Promise((resolve, reject) => {
     let child;
@@ -104,16 +105,18 @@ export async function windowsFetch(url, options, config, { spawnImpl = spawn } =
     const route = result.route === 'proxy' ? '经代理：' : result.route === 'direct' ? '系统为该地址选择了直连：' : '';
     throw new ImageGenerationError(route + NETWORK_ERRORS[code], code === 'TIMEOUT' ? 'TIMEOUT' : 'TRANSPORT', result.status || undefined);
   }
-  if (!Number.isInteger(result.status) || result.status < 100 || result.status > 599 || typeof result.body !== 'string') throw helperFailure();
+  if (!Number.isInteger(result.status) || result.status < 100 || result.status > 599
+    || (options.responseType === 'bytes' ? typeof result.base64 !== 'string' : typeof result.body !== 'string')) throw helperFailure();
   const manualUpdateRedirect = options.redirect === 'manual' && options.method === 'GET'
-    && url === 'https://gitee.com/un-important/dsh-openai-image/raw/main/latest.json';
+    && /^https:\/\/gitee\.com\/un-important\/dsh-openai-image\/raw\/main\/(?:latest\.json|dsh-openai-image-\d+\.\d+\.\d+\.tgz)$/.test(url);
   if (result.status >= 300 && result.status < 400 && !manualUpdateRedirect) {
     throw new ImageGenerationError('接口返回了重定向，已停止请求。请检查代理登录页或网络认证；未转发 API Key。', 'TRANSPORT', result.status);
   }
   if (result.status === 407) throw new ImageGenerationError(NETWORK_ERRORS.PROXY_AUTH, 'TRANSPORT', 407);
   return { ok: result.status >= 200 && result.status < 300, status: result.status,
     headers: { get: name => name.toLowerCase() === 'location' && typeof result.location === 'string' ? result.location : null },
-    text: async () => result.body, json: async () => JSON.parse(result.body) };
+    text: async () => result.body, json: async () => JSON.parse(result.body),
+    arrayBuffer: async () => Buffer.from(result.base64 ?? '', 'base64') };
 }
 
 export function createImageFetch(config, { platform = process.platform, env = process.env, hostFetch = (...args) => globalThis.fetch(...args), systemFetch = windowsFetch } = {}) {

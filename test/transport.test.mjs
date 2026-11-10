@@ -243,3 +243,16 @@ test('Windows helper does not follow redirects and cancellation closes its local
   await closed;
   assert.equal(requests, 2);
 });
+
+test('Windows helper downloads binary tgz bytes without UTF-8 conversion or changing system proxy', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
+  const bytes = Buffer.from([31, 139, 8, 0, 255, 0, 128, 192, 222, 1]);
+  const server = http.createServer((request, response) => {
+    assert.equal(request.method, 'GET'); assert.equal(request.headers.authorization, undefined);
+    response.end(bytes);
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => server.close());
+  const address = `http://127.0.0.1:${server.address().port}`;
+  const reply = await windowsFetch(address, { method: 'GET', headers: { accept: 'application/octet-stream' }, responseType: 'bytes', maxResponseBytes: 2 * 1024 * 1024 },
+    { ...config, proxyUrl: address });
+  assert.deepEqual(Buffer.from(await reply.arrayBuffer()), bytes);
+});

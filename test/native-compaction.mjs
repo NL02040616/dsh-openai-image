@@ -112,7 +112,7 @@ try {
   await agent.whenIdle();
   assert.equal(end().kind, 'completed', JSON.stringify(end()));
   assert.equal(calls.length, 1);
-  assert.ok(result().content.some(block => block.type === 'image'));
+  assert.ok(result().content.some(block => block.type === 'image'), JSON.stringify(result()));
   await runChat('History retained before editing. '.repeat(40000));
   const beforeEdit = agent.session.deriveMessages();
   assert.equal(agent.session.requestHeader().config.provider, 'chat-fixture');
