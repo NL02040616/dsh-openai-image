@@ -11,6 +11,14 @@ import { REQUEST_RECORD, requestSnapshot } from './recovery.js';
 
 export const name = 'openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
+// This adapter is a local tool-call router, not a chat-model wire adapter:
+// stream() selects the current prompt/references; generateImage() sends only
+// those to the Images API. Historical chat tokens do not consume its context.
+// DSH 0.2.2 nevertheless requires a positive finite context capacity on model
+// switches. Represent this router's unbounded history with the largest safe
+// integer so switching cannot summarize/discard chat or reference history.
+// This is NOT an OpenAI model context limit; API input limits stay in core.js.
+const ROUTER_CONTEXT_WINDOW = Number.MAX_SAFE_INTEGER;
 export const Config = z.object({
   apiKeyEnv: z.string().default('OPENAI_API_KEY'),
   defaultModel: z.union(MODELS.map(model => z.const(model.id))).default('gpt-image-2.5-flare'),
@@ -82,7 +90,7 @@ export function apply(ctx, config) {
     async resolveModel(provider, id) {
       const model = MODELS.find(item => item.id === id);
       if (!model) throw new LlmError(`未知生图模型：${id}`, 'UNKNOWN_MODEL');
-      return { ...model, provider, inputModalities: ['text', 'image'] };
+      return { ...model, provider, inputModalities: ['text', 'image'], context: { contextWindow: ROUTER_CONTEXT_WINDOW } };
     }
     async *stream(options) {
       // Titles use the selected route too; they must never create paid images.
