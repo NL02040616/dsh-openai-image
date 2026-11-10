@@ -182,6 +182,23 @@ test('Windows helper round-trips UTF-8 request and response with an isolated loc
   assert.equal(receivedHeaders.accept, 'application/json');
 });
 
+test('Windows helper supports bounded anonymous GET without a request body on an isolated local server', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
+  const seen = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    seen.push({ method: request.method, headers: request.headers, body: Buffer.concat(chunks).toString() });
+    response.end(request.url === '/large' ? 'x'.repeat(17000) : '{"version":"1.7.0"}');
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const init = { method: 'GET', headers: { accept: 'application/json' }, maxResponseBytes: 16384 };
+  const localConfig = { ...config, proxyUrl: base };
+  const reply = await windowsFetch(base + '/latest', init, localConfig);
+  assert.equal(await reply.text(), '{"version":"1.7.0"}');
+  assert.equal(seen[0].method, 'GET'); assert.equal(seen[0].body, ''); assert.equal(seen[0].headers.authorization, undefined);
+  await assert.rejects(windowsFetch(base + '/large', init, localConfig), /过大/);
+});
+
 test('Windows helper does not follow redirects and cancellation closes its local connection', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
   let requests = 0;
   let arrival;

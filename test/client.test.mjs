@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { MODELS, QUALITIES, SIZE_PRESETS, commandRequest } from '../core.js';
+import { validateRelease } from '../updates.js';
 const code = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 
 function fixture(saved = new Map()) {
@@ -13,6 +14,8 @@ function fixture(saved = new Map()) {
   const drafts = new Map();
   let imageFetch = async url => ({ ok: true, blob: async () => new Blob([url]) });
   const session = { running: false }, cleanups = [];
+  const updateCalls = [], timers = [], copies = [], navigations = [];
+  let updateFetch = async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.0', status: 'error' }) });
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
     Fragment: 'fragment', useSyncExternalStore: (_listen, read) => read(),
@@ -21,13 +24,16 @@ function fixture(saved = new Map()) {
     useEffect: callback => { const cleanup = callback(); if (cleanup) cleanups.push(cleanup); },
   };
   const ctx = {
-    locale: { register: (_name, copy) => Object.assign(translations, copy), bind: () => (key, values) => values ? key + JSON.stringify(values) : key, subscribe: () => () => {}, getSnapshot: () => 'zh' },
+    locale: { register: (_name, copy) => Object.assign(translations, copy), bind: () => (key, values) => values ? key + JSON.stringify(values) : key, subscribe: () => () => {}, getSnapshot: () => ({ active: 'zh', revision: 1 }) },
     effect: callback => { disposers.push(callback()); }, on: (name, callback) => events.set(name, callback),
+    inject: (_deps, callback) => callback(ctx),
+    pluginNavigation: { openBundle: name => navigations.push(name) },
     slots: { inject: (_name, callback) => callback(), register: (meta, component) => {
       // DSH's read-image-toolview already owns this declaration. Re-declaring
       // it prevents cold boot, even when the requested spec is identical.
       assert.ok(!meta.children?.['tool.call.images'], 'must not redeclare the native image slot');
       slots.set(meta.name, component); registrations.set(meta.key ?? meta.name, { meta, component });
+      if (meta.id) registrations.set(meta.id, { meta, component });
     } },
     uiConversation: { events: { register: definition => definitions.set(definition.kind, definition) } },
     conversation: {
@@ -50,9 +56,12 @@ function fixture(saved = new Map()) {
       plugin.apply(scoped);
     } } },
     localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) },
-    AbortSignal, File,
+    AbortSignal, AbortController, File,
+    setTimeout: (callback, ms) => { const item = { callback, ms }; timers.push(item); return item; }, clearTimeout: () => {},
+    navigator: { clipboard: { writeText: async text => copies.push(text) } },
     fetch: async url => {
       if (url.startsWith('fixture-image:')) return imageFetch(url);
+      if (url.startsWith('api/openai-image.updates')) { updateCalls.push(url); return updateFetch(url); }
       assert.equal(url, 'api/openai-image.options'); return { ok: true, json: () => new Promise(resolve => { resolveOptions = resolve; }) };
     },
   });
@@ -69,8 +78,57 @@ function fixture(saved = new Map()) {
   const control = label => all(render()).find(node => node.props?.['aria-label'] === label);
   const renderComponent = (component, componentProps, fresh = false) => { if (fresh) states = []; cursor = 0; return component(componentProps); };
   return { calls, finish, input, props, render, control, source, saved, events, config, definitions, registrations, all, renderComponent, drafts, translations,
-    ctx, session, setImageFetch: fn => imageFetch = fn, unmount: () => cleanups.forEach(fn => fn()) };
+    ctx, session, timers, copies, navigations, updateCalls, setUpdateFetch: fn => updateFetch = fn,
+    setImageFetch: fn => imageFetch = fn, unmount: () => [...cleanups, ...disposers].forEach(fn => { if (typeof fn === 'function') fn(); }) };
 }
+
+test('update badge, manual check, copy, ignore and manager navigation never change image drafts or send commands', async () => {
+  const f = fixture(); await f.finish();
+  const reply = { currentVersion: '1.7.0', status: 'available', source: 'Gitee', compatibility: 'compatible',
+    release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '1.8.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
+      dshVersions: ['0.2.2-rc.1'], notes: { zh: ['测试说明'], en: ['Test notes'] } }) };
+  f.setUpdateFetch(async () => ({ ok: true, json: async () => reply }));
+  const draw = () => f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true);
+  const panel = () => f.renderComponent(f.registrations.get('openai-image-updates').component, f.props, true);
+  const button = label => f.all(panel()).find(n => n.type === 'button' && n.children.includes(label));
+  const original = JSON.stringify(f.input);
+  assert.equal(panel(), null, 'background checks never open the panel');
+  await f.timers[0].callback(); await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.all(draw()).some(n => n.type === 'button' && n.children.includes('updateBadge')));
+  assert.equal(panel(), null);
+  f.all(draw()).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
+  assert.ok(button('copyGitee'));
+  assert.ok(JSON.stringify(panel()).includes('测试说明'), 'release notes follow the native locale snapshot');
+  await button('copyGitee').props.onClick(); assert.equal(f.copies[0], reply.release.links.gitee);
+  await button('copyGithub').props.onClick(); assert.equal(f.copies[1], reply.release.links.github);
+  button('ignoreUpdate').props.onClick(); assert.equal(panel(), null);
+  assert.ok(!f.all(draw()).some(n => n.children.includes('updateBadge')));
+  f.all(draw()).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
+  await button('checkUpdate').props.onClick(); assert.ok(f.updateCalls.at(-1).endsWith('?manual=1'));
+  assert.ok(JSON.stringify(panel()).includes('updateIgnored'));
+  f.session.running = true; assert.equal(button('openPlugins').props.disabled, true);
+  f.session.running = false; button('openPlugins').props.onClick();
+  assert.deepEqual(f.navigations, ['dsh-openai-image']); assert.equal(panel(), null);
+  assert.equal(JSON.stringify(f.input), original); assert.equal(f.calls.length, 0);
+  f.unmount();
+});
+
+test('incompatible release disables installation copying, errors remain in update panel without blocking draw', async () => {
+  const f = fixture(); await f.finish();
+  const panel = () => f.renderComponent(f.registrations.get('openai-image-updates').component, f.props, true);
+  const draw = f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true);
+  f.all(draw).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
+  const check = () => f.all(panel()).find(n => n.type === 'button' && n.children.includes('checkUpdate')).props.onClick();
+  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.0', status: 'available', source: 'GitHub', compatibility: 'incompatible',
+    release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '2.0.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
+      dshVersions: ['0.3.0'], notes: { zh: ['需要新版'], en: ['Needs a newer DSH'] } }) }) }));
+  await check(); assert.ok(JSON.stringify(panel()).includes('incompatibleDsh'));
+  assert.equal(f.all(panel()).find(n => n.type === 'button' && n.children.includes('copyGitee')).props.disabled, true);
+  f.setUpdateFetch(async () => { throw new Error('offline'); }); await check();
+  assert.ok(JSON.stringify(panel()).includes('updateFailed'));
+  assert.equal((await f.source.matchClaim({ sessionId: 'one' }, '/draw').submit('cat')).kind, 'success');
+  f.unmount();
+});
 
 test('persisted image results render as an authorized gallery outside collapsed tool steps', () => {
   const f = fixture();

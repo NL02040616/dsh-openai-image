@@ -57,6 +57,7 @@ export async function windowsFetch(url, options, config, { spawnImpl = spawn } =
     timeoutMs: config.timeoutMs,
     proxyUrl: config.proxyUrl?.trim() || '',
     proxyUseDefaultCredentials: config.proxyUseDefaultCredentials === true,
+    maxResponseBytes: options.maxResponseBytes ?? 50 * 1024 * 1024,
   };
   const result = await new Promise((resolve, reject) => {
     let child;
@@ -84,7 +85,7 @@ export async function windowsFetch(url, options, config, { spawnImpl = spawn } =
     child.stdin.on('error', () => finish(helperFailure()));
     child.stdout.on('data', chunk => {
       length += chunk.length;
-      if (length > MAX_OUTPUT) return finish(new ImageGenerationError(NETWORK_ERRORS.TOO_LARGE, 'TRANSPORT'));
+      if (length > Math.min(MAX_OUTPUT, packet.maxResponseBytes * 8 + 4096)) return finish(new ImageGenerationError(NETWORK_ERRORS.TOO_LARGE, 'TRANSPORT'));
       chunks.push(chunk);
     });
     child.once('close', code => {
@@ -108,7 +109,7 @@ export async function windowsFetch(url, options, config, { spawnImpl = spawn } =
     throw new ImageGenerationError('接口返回了重定向，已停止请求。请检查代理登录页或网络认证；未转发 API Key。', 'TRANSPORT', result.status);
   }
   if (result.status === 407) throw new ImageGenerationError(NETWORK_ERRORS.PROXY_AUTH, 'TRANSPORT', 407);
-  return { ok: result.status >= 200 && result.status < 300, status: result.status, json: async () => JSON.parse(result.body) };
+  return { ok: result.status >= 200 && result.status < 300, status: result.status, text: async () => result.body, json: async () => JSON.parse(result.body) };
 }
 
 export function createImageFetch(config, { platform = process.platform, env = process.env, hostFetch = (...args) => globalThis.fetch(...args), systemFetch = windowsFetch } = {}) {

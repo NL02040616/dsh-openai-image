@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import z from '@deepseek-ai/schemastery';
 import { LlmAdapter, LlmError, attributionHeaders, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
@@ -8,6 +10,7 @@ import { ImageGenerationError, MODELS, PROVIDER, QUALITIES, SIZE_PRESETS, genera
 import { installOneShot } from './one-shot.js';
 import { createImageFetch } from './transport.js';
 import { REQUEST_RECORD, requestSnapshot } from './recovery.js';
+import { createUpdateChecker, createUpdateFetch } from './updates.js';
 
 export const name = 'openai-image';
 export const inject = ['llm', 'credentials', 'attachments', 'tools'];
@@ -32,10 +35,19 @@ export const Config = z.object({
 
 export function apply(ctx, config) {
   installOneShot(ctx, config);
+  const lifetime = new AbortController();
+  const currentVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+  let dshVersion = null;
+  try { dshVersion = JSON.parse(readFileSync(createRequire(import.meta.url).resolve('@deepseek-ai/dsh-llm/package.json'), 'utf8')).version; } catch {}
+  const updates = createUpdateChecker({ currentVersion, dshVersion, fetchImpl: createUpdateFetch(config), signal: lifetime.signal });
   ctx.inject(['connection'], scope => {
     // Publish only the non-secret choices. Never expose the full plugin config.
     // Connection's exact /api routes enforce authenticated owner access on both
     // the desktop carrier and the web server.
+    scope.connection.fetch.register({
+      path: '/api/openai-image.updates', methods: ['GET'], requestBody: 'buffered',
+      fetch: async request => Response.json(await updates.check(new URL(request.url).searchParams.get('manual') === '1'), { headers: { 'cache-control': 'no-store' } }),
+    });
     scope.connection.fetch.register({
       path: '/api/openai-image.options', methods: ['GET'], requestBody: 'buffered',
       fetch: () => Response.json({ models: MODELS, qualities: QUALITIES, sizes: SIZE_PRESETS, defaults: { model: config.defaultModel, quality: config.quality, size: config.size, sizeMode: 'prompt' } }, { headers: { 'cache-control': 'no-store' } }),
@@ -43,7 +55,6 @@ export function apply(ctx, config) {
   });
   const fetchImpl = createImageFetch(config);
   const ref = credentialRef(config.apiKeyEnv);
-  const lifetime = new AbortController();
   const isImageCall = exec => exec.callId?.startsWith('openai_image_') && exec.agent?.session.requestHeader()?.config.provider === PROVIDER;
   const finishImageCall = (exec, value) => {
     if (isImageCall(exec)) exec.concludeTurn();

@@ -4,6 +4,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     /* SHARED_IMAGE_SIZING */
     /* SHARED_IMAGE_HISTORY */
+    /* SHARED_UPDATE_CLIENT */
     const descriptions = {
       zh: {
         'gpt-image-2.6-flare': '新一代速度优先：适合交互式创作和快速迭代，支持文字生图与参考图编辑。本插件输出静态 PNG；费用随画质、尺寸和参考图用量变化。',
@@ -39,6 +40,14 @@ window.__ModuleLoader__.load({
         restored: '已恢复到输入框，修改后发送即可。尚未生成图片。', retried: '已提交一次重试，请查看新的生成卡片。',
         recoverChanged: '输入内容或会话已变化，未替换草稿，请重新点击。', recoverIncomplete: '历史参数不完整或已不可用，请补全后发送。',
         chooseRequired: '请选择（原值未记录或已不可用）', referenceMissing: '参考图 {index} 无法读取，未替换草稿，请检查附件。',
+        updates: '插件更新', updateBadge: '有新版本', updateTitle: 'OpenAI 生图更新', installed: '已安装', latest: '最新版本',
+        checkUpdate: '检查更新', checkingUpdate: '正在检查…', updateFailed: '暂时无法检查更新，请稍后手动重试。画图功能不受影响。',
+        upToDate: '已是最新版本', notChecked: '启动后会自动检查，也可立即手动检查。', closeUpdate: '收起',
+        copyGitee: '复制 Gitee 安装地址', copyGithub: '复制 GitHub 安装地址', copied: '已复制安装地址', copyFailed: '复制失败，请选中下方地址后复制。',
+        openPlugins: '打开插件管理器', ignoreUpdate: '忽略此版本', updateIgnored: '已忽略此版本的提醒',
+        compatibleDsh: '兼容当前 DSH', incompatibleDsh: '与当前 DSH 不兼容，请先核对并更新 DSH。', unknownDsh: '无法确认当前 DSH 版本，请先核对兼容性。',
+        supportedDsh: '支持的 DSH 版本', updateInstructions: '在插件管理器中添加此安装地址；若提示已有副本，先记录自定义配置，再卸载旧副本并安装新版。按提示完整退出重启。',
+        updateDuringImage: '图片正在生成，完成后再打开插件管理器更新。', updatePrivacy: '每天最多自动检查一次，优先 Gitee、GitHub 备用。只读取公开版本信息，不发送密钥或对话，不自动安装。',
       },
       en: {
         'gpt-image-2.6-flare': 'New generation, speed first: for interactive creation and quick iterations, with text-to-image generation and reference-image editing. This plugin outputs static PNGs. Cost varies with quality, dimensions and reference-image usage.',
@@ -74,6 +83,14 @@ window.__ModuleLoader__.load({
         restored: 'Restored to the composer. Edit and send when ready. No image generated yet.', retried: 'One retry submitted. See the new generation card.',
         recoverChanged: 'The draft or conversation changed. Nothing replaced; try again.', recoverIncomplete: 'Some original settings are missing or unavailable. Complete them before sending.',
         chooseRequired: 'Select (original value missing or unavailable)', referenceMissing: 'Reference {index} could not be loaded. Draft unchanged; check the attachment.',
+        updates: 'Plugin updates', updateBadge: 'Update available', updateTitle: 'OpenAI Images updates', installed: 'Installed', latest: 'Latest version',
+        checkUpdate: 'Check for updates', checkingUpdate: 'Checking…', updateFailed: 'Updates could not be checked. Try again later; image creation is unaffected.',
+        upToDate: 'Up to date', notChecked: 'An automatic check will run shortly. You can also check now.', closeUpdate: 'Close',
+        copyGitee: 'Copy Gitee install URL', copyGithub: 'Copy GitHub install URL', copied: 'Install URL copied', copyFailed: 'Copy failed. Select and copy the URL below.',
+        openPlugins: 'Open plugin manager', ignoreUpdate: 'Ignore this version', updateIgnored: 'Reminders for this version are ignored',
+        compatibleDsh: 'Compatible with your DSH', incompatibleDsh: 'Incompatible with your DSH. Check and update DSH first.', unknownDsh: 'Your DSH version could not be determined. Check compatibility first.',
+        supportedDsh: 'Supported DSH versions', updateInstructions: 'Add this URL in the plugin manager. If a copy is already installed, record custom settings, uninstall it and install the new version. Fully restart when prompted.',
+        updateDuringImage: 'Wait for image creation to finish before opening the plugin manager to update.', updatePrivacy: 'Automatic checks run at most daily, using Gitee with GitHub as fallback. Only public version information is fetched. No keys or conversations are sent, and nothing is installed automatically.',
       },
     };
     return {
@@ -88,6 +105,49 @@ window.__ModuleLoader__.load({
         const editable = input => input && !['adjudicating', 'submitting'].includes(input.phase);
         const buttonStyle = { font: 'inherit', fontSize: 12, borderRadius: 16, padding: '5px 10px', cursor: 'pointer', color: 'var(--dsw-alias-label-primary)', background: 'var(--dsw-alias-button-floating-fill)', border: '1px solid var(--dsw-alias-border-l3)' };
         function useCopy() { React.useSyncExternalStore(subscribe, getSnapshot); return t; }
+        let updateStorage;
+        try { updateStorage = localStorage; } catch {}
+        const updates = createUpdateClient({ currentVersion: installedVersion, fetcher: (...args) => fetch(...args), storage: updateStorage });
+        ctx.effect(() => { updates.start(); return () => updates.dispose(); });
+        let openPluginManager;
+        ctx.inject(['pluginNavigation'], scope => {
+          openPluginManager = () => scope.pluginNavigation.openBundle('dsh-openai-image');
+          scope.effect(() => () => { openPluginManager = undefined; });
+        });
+        function UpdatePanel({ useSession }) {
+          useCopy();
+          const state = React.useSyncExternalStore(updates.subscribe, updates.getSnapshot);
+          const running = useSession(s => s.running);
+          const [message, setMessage] = React.useState('');
+          if (!state.open) return null;
+          const result = state.result, release = result?.release;
+          const newer = result?.status === 'available';
+          const copy = async url => {
+            try { await navigator.clipboard.writeText(url); setMessage(t('copied')); }
+            catch { setMessage(t('copyFailed')); }
+          };
+          const notes = release?.notes?.[String(getSnapshot().active).startsWith('zh') ? 'zh' : 'en'] ?? [];
+          return h('section', { 'aria-label': t('updateTitle'), style: { boxSizing: 'border-box', width: 'calc(100% - 32px)', maxWidth: 'var(--dsh-composer-card-max-width, 760px)', margin: '8px auto', padding: 12, border: '1px solid var(--dsw-alias-border-l3)', borderRadius: 12, fontSize: 12, maxHeight: 260, overflowY: 'auto', color: 'var(--dsw-alias-label-primary)' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
+              h('strong', null, t('updateTitle')), h('span', null, `${t('installed')} ${installedVersion}`),
+              h('button', { type: 'button', style: buttonStyle, disabled: state.checking, onClick: () => { setMessage(''); return updates.check(); } }, t(state.checking ? 'checkingUpdate' : 'checkUpdate')),
+              h('button', { type: 'button', style: buttonStyle, onClick: updates.close }, t('closeUpdate'))),
+            h('p', { role: 'status' }, state.checking ? t('checkingUpdate') : t(!result ? 'notChecked' : result.status === 'error' ? 'updateFailed' : newer ? 'updateBadge' : 'upToDate')),
+            release && h('div', null,
+              h('div', null, `${t('latest')} ${release.version} · ${release.publishedAt} · ${result.source}`),
+              h('div', null, t(result.compatibility === 'compatible' ? 'compatibleDsh' : result.compatibility === 'incompatible' ? 'incompatibleDsh' : 'unknownDsh')),
+              h('div', null, `${t('supportedDsh')}：${release.dshVersions.join(', ')}`),
+              h('ul', null, notes.map((line, i) => h('li', { key: i }, line))),
+              newer && h('div', null,
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                  ...['gitee', 'github'].map(source => h('button', { key: source, type: 'button', style: buttonStyle, disabled: result.compatibility !== 'compatible', onClick: () => copy(release.links[source]) }, t(source === 'gitee' ? 'copyGitee' : 'copyGithub'))),
+                  h('button', { type: 'button', style: buttonStyle, disabled: running || !openPluginManager, onClick: () => { openPluginManager?.(); updates.close(); } }, t('openPlugins')),
+                  h('button', { type: 'button', style: buttonStyle, onClick: updates.ignore }, t('ignoreUpdate'))),
+                result.compatibility === 'compatible' && h('input', { 'aria-label': t('copyGitee'), readOnly: true, value: release.links.gitee, style: { boxSizing: 'border-box', width: '100%', marginTop: 8 }, onFocus: e => e.target.select() }),
+                h('p', null, running ? t('updateDuringImage') : t('updateInstructions')),
+                state.ignored === release.version && h('p', null, t('updateIgnored')))),
+            message && h('p', { role: 'status' }, message), h('p', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('updatePrivacy')));
+        }
         // Selections live in this browser, per conversation. Sending snapshots them
         // into one command; no asynchronous write to shared server defaults.
         const choices = new Map();
@@ -172,6 +232,8 @@ window.__ModuleLoader__.load({
         }
         function DrawButton({ useInput, useSession, inputActions }) {
           useCopy();
+          const updateState = React.useSyncExternalStore(updates.subscribe, updates.getSnapshot);
+          const newer = updateState.result?.status === 'available' && updateState.ignored !== updateState.result.release.version;
           const input = useInput(s => s);
           const running = useSession(s => s.running);
           const [error, setError] = React.useState('');
@@ -181,6 +243,8 @@ window.__ModuleLoader__.load({
               'aria-pressed': selected, title: running ? t('busy') : t('drawTip'), disabled: running || !editable(input),
               onClick: () => { try { setError(''); selected ? cancel(input, inputActions) : arm(input, inputActions); } catch (error) { setError(error.message); } },
             }, selected ? t('once') : `🎨 ${t('draw')}`),
+            h('button', { type: 'button', style: { ...buttonStyle, color: newer ? 'var(--dsw-alias-state-business-primary)' : buttonStyle.color },
+              'aria-label': t('updates'), title: t('updates'), 'aria-expanded': updateState.open, onClick: updates.toggle }, newer ? t('updateBadge') : 'ⓘ'),
             error && h('span', { role: 'alert', style: { fontSize: 12 } }, error));
         }
         function ReferenceDock({ useInput, useSession, inputActions, sessionId }) {
@@ -451,6 +515,7 @@ window.__ModuleLoader__.load({
           name: 'conversation.chat.node', key: history.kind,
         }, ImageCard));
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({ name: 'conversation.input.left', id: 'openai-image-draw', order: 30 }, DrawButton));
+        ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'openai-image-updates', order: 20 }, UpdatePanel));
         ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'openai-image-references', order: 30 }, ReferenceDock));
         for (const name of ['conversation.chat.message.images', 'conversation.chat.user.images', 'tool.call.images']) {
           ctx.slots.inject(name, () => ctx.slots.register({ name, id: 'openai-image-edit', priority: 50 }, EditableImages));

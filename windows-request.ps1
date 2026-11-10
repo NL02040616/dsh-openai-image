@@ -12,8 +12,13 @@ $route = 'unknown'
 try {
     $packet = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $uri = [Uri]$packet.url
+    $updateUrls = @('https://gitee.com/un-important/dsh-openai-image/raw/main/latest.json', 'https://raw.githubusercontent.com/NL02040616/dsh-openai-image/main/latest.json')
+    $isUpdate = $updateUrls -ccontains [string]$packet.url
+    if ($isUpdate -and ($packet.method -cne 'GET' -or $packet.body -or @($packet.headers.PSObject.Properties | Where-Object { $_.Name -ine 'accept' }).Count -gt 0)) {
+        throw 'Unsupported update request'
+    }
     # Loopback HTTP is only for isolated transport tests; the JS entry point restricts production URLs.
-    if (!(($uri.Scheme -eq 'https' -and $uri.Host -eq 'api.openai.com' -and $uri.AbsolutePath -match '^/v1/images/(generations|edits)$') -or ($uri.IsLoopback -and $uri.Scheme -eq 'http'))) {
+    if (!(($uri.Scheme -eq 'https' -and $uri.Host -eq 'api.openai.com' -and $uri.AbsolutePath -match '^/v1/images/(generations|edits)$') -or $isUpdate -or ($uri.IsLoopback -and $uri.Scheme -eq 'http'))) {
         throw 'Unsupported endpoint'
     }
     if ($packet.proxyUrl) {
@@ -48,10 +53,12 @@ try {
         elseif ($header.Name -ieq 'accept') { $request.Accept = [string]$header.Value }
         else { $request.Headers[$header.Name] = [string]$header.Value }
     }
-    $bytes = [Text.Encoding]::UTF8.GetBytes([string]$packet.body)
-    $request.ContentLength = $bytes.Length
-    $stream = $request.GetRequestStream()
-    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    if ($request.Method -ne 'GET' -and $request.Method -ne 'HEAD') {
+        $bytes = [Text.Encoding]::UTF8.GetBytes([string]$packet.body)
+        $request.ContentLength = $bytes.Length
+        $stream = $request.GetRequestStream()
+        try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    }
     try { $response = $request.GetResponse() }
     catch [Net.WebException] {
         if ($null -eq $_.Exception.Response) { throw }
@@ -62,7 +69,8 @@ try {
         $body = New-Object Text.StringBuilder
         $buffer = New-Object char[] 8192
         while (($count = $reader.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            if ($body.Length + $count -gt 50MB) { throw 'RESPONSE_TOO_LARGE' }
+            $limit = if ($isUpdate) { 16384 } elseif ($packet.maxResponseBytes) { [Math]::Min(50MB, [int]$packet.maxResponseBytes) } else { 50MB }
+            if ($body.Length + $count -gt $limit) { throw 'RESPONSE_TOO_LARGE' }
             [void]$body.Append($buffer, 0, $count)
         }
         @{ status = [int]$response.StatusCode; body = $body.ToString() } | ConvertTo-Json -Compress
