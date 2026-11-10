@@ -106,6 +106,15 @@ test('host mode retains the exact fetch request and does not replace the dispatc
   assert.ok(!Object.hasOwn(received[1], 'dispatcher'));
 });
 
+test('Windows exposes only the public Gitee manifest redirect; image requests still reject redirects', async () => {
+  const url = 'https://gitee.com/un-important/dsh-openai-image/raw/main/latest.json';
+  const location = 'https://raw.giteeusercontent.com/un-important/dsh-openai-image/raw/main/latest.json?signature=fixture';
+  const init = { method: 'GET', redirect: 'manual', headers: { accept: 'application/json' }, maxResponseBytes: 16384 };
+  const response = await windowsFetch(url, init, config, { spawnImpl: fakeHelper({ status: 302, body: '', location }) });
+  assert.equal(response.status, 302); assert.equal(response.headers.get('location'), location);
+  await assert.rejects(windowsFetch(endpoint, { ...options, redirect: 'manual' }, config, { spawnImpl: fakeHelper({ status: 302, body: '', location }) }), /未转发 API Key/);
+});
+
 test('helper failures are bounded and sanitized; proxy authentication is distinct from API authentication', async () => {
   for (const code of ['PROXY_AUTH', 'PROXY_DENIED', 'TLS', 'DNS', 'CONNECT', 'TIMEOUT']) {
     await assert.rejects(windowsFetch(endpoint, options, config, {

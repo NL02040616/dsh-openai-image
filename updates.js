@@ -35,12 +35,23 @@ export function validateRelease(value) {
 
 export function createUpdateFetch(config, { platform = process.platform, env = process.env,
   hostFetch = (...args) => globalThis.fetch(...args), systemFetch = windowsFetch } = {}) {
-  return (url, { signal } = {}) => {
+  return async (url, { signal } = {}) => {
     if (!UPDATE_SOURCES.some(source => source.url === url)) throw new Error('Unknown update source');
-    const options = { method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store',
+    const options = { method: 'GET', redirect: 'manual', credentials: 'omit', cache: 'no-store',
       headers: { accept: 'application/json' }, signal, maxResponseBytes: MAX_MANIFEST };
-    return transportMode(config, platform, env) === 'host' ? hostFetch(url, options)
-      : systemFetch(url, options, { ...config, timeoutMs: 8000 });
+    const send = (target, init) => transportMode(config, platform, env) === 'host' ? hostFetch(target, init)
+      : systemFetch(target, init, { ...config, timeoutMs: 8000 });
+    const response = await send(url, options);
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers?.get('location');
+    await response.body?.cancel().catch(() => {});
+    // Gitee serves raw files through a signed URL on its file domain. Follow
+    // exactly one anonymous GET to this manifest, never an arbitrary redirect.
+    if (url !== UPDATE_SOURCES[0].url || typeof location !== 'string' || location.length > 4096) throw new Error('Unexpected update redirect');
+    const target = new URL(location);
+    if (target.origin !== 'https://raw.giteeusercontent.com' || target.pathname !== '/un-important/dsh-openai-image/raw/main/latest.json'
+      || target.username || target.password || target.hash) throw new Error('Unexpected update redirect');
+    return send(target.href, { ...options, redirect: 'error' });
   };
 }
 

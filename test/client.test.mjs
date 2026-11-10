@@ -15,7 +15,7 @@ function fixture(saved = new Map()) {
   let imageFetch = async url => ({ ok: true, blob: async () => new Blob([url]) });
   const session = { running: false }, cleanups = [];
   const updateCalls = [], timers = [], copies = [], navigations = [];
-  let updateFetch = async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.0', status: 'error' }) });
+  let updateFetch = async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.1', status: 'error' }) });
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(Boolean) }),
     Fragment: 'fragment', useSyncExternalStore: (_listen, read) => read(),
@@ -84,7 +84,7 @@ function fixture(saved = new Map()) {
 
 test('update badge, manual check, copy, ignore and manager navigation never change image drafts or send commands', async () => {
   const f = fixture(); await f.finish();
-  const reply = { currentVersion: '1.7.0', status: 'available', source: 'Gitee', compatibility: 'compatible',
+  const reply = { currentVersion: '1.7.1', status: 'available', source: 'Gitee', compatibility: 'compatible',
     release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '1.8.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
       dshVersions: ['0.2.2-rc.1'], notes: { zh: ['测试说明'], en: ['Test notes'] } }) };
   f.setUpdateFetch(async () => ({ ok: true, json: async () => reply }));
@@ -119,7 +119,7 @@ test('incompatible release disables installation copying, errors remain in updat
   const draw = f.renderComponent(f.registrations.get('openai-image-draw').component, f.props, true);
   f.all(draw).find(n => n.props?.['aria-label'] === 'updates').props.onClick();
   const check = () => f.all(panel()).find(n => n.type === 'button' && n.children.includes('checkUpdate')).props.onClick();
-  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.0', status: 'available', source: 'GitHub', compatibility: 'incompatible',
+  f.setUpdateFetch(async () => ({ ok: true, json: async () => ({ currentVersion: '1.7.1', status: 'available', source: 'GitHub', compatibility: 'incompatible',
     release: validateRelease({ schema: 1, package: 'dsh-openai-image', version: '2.0.0', publishedAt: '2026-11-10', sha256: 'a'.repeat(64),
       dshVersions: ['0.3.0'], notes: { zh: ['需要新版'], en: ['Needs a newer DSH'] } }) }) }));
   await check(); assert.ok(JSON.stringify(panel()).includes('incompatibleDsh'));

@@ -29,14 +29,35 @@ test('Gitee first, GitHub fallback; anonymous bounded GET retains proxy mode and
   assert.equal(result.source, 'GitHub'); assert.equal(result.status, 'available');
   assert.deepEqual(seen.map(r => r.url), UPDATE_SOURCES.map(r => r.url));
   for (const { init } of seen) {
-    assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'error'); assert.equal(init.credentials, 'omit');
+    assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'manual'); assert.equal(init.credentials, 'omit');
     assert.deepEqual(init.headers, { accept: 'application/json' }); assert.equal(init.body, undefined);
   }
-  assert.throws(() => transport('https://api.openai.com/v1/images/generations'), /Unknown/);
+  await assert.rejects(transport('https://api.openai.com/v1/images/generations'), /Unknown/);
   assert.equal(globalThis.fetch, before); assert.deepEqual(env, { HTTPS_PROXY: 'fixture-proxy' });
   let systemRequest;
   await createUpdateFetch({ networkMode: 'system', timeoutMs: 300000 }, { platform: 'win32', systemFetch: async (...args) => { systemRequest = args; return response(manifest()); } })(UPDATE_SOURCES[0].url);
   assert.equal(systemRequest[1].method, 'GET'); assert.equal(systemRequest[1].maxResponseBytes, 16384); assert.equal(systemRequest[2].timeoutMs, 8000);
+});
+
+test('Gitee follows one anonymous redirect only to the exact public manifest on its file domain', async () => {
+  const target = 'https://raw.giteeusercontent.com/un-important/dsh-openai-image/raw/main/latest.json?signature=fixture';
+  const calls = [];
+  const fetchImpl = createUpdateFetch({ networkMode: 'host' }, { hostFetch: async (url, init) => {
+    calls.push({ url, init });
+    return calls.length === 1 ? new Response(null, { status: 302, headers: { location: target } }) : response(manifest());
+  } });
+  assert.equal((await createUpdateChecker({ ...options, fetchImpl }).check()).source, 'Gitee');
+  assert.deepEqual(calls.map(call => call.url), [UPDATE_SOURCES[0].url, target]);
+  assert.equal(calls[1].init.redirect, 'error');
+  assert.equal(calls[1].init.credentials, 'omit');
+  assert.deepEqual(calls[1].init.headers, { accept: 'application/json' });
+  for (const location of ['http://127.0.0.1/private', target.replace('https:', 'http:'), target.replace('/latest.json', '/other.json'),
+    target.replace('raw.giteeusercontent.com', 'raw.giteeusercontent.com.evil.invalid'), target.replace('https://', 'https://user:pass@')]) {
+    let count = 0;
+    const invalid = createUpdateFetch({ networkMode: 'host' }, { hostFetch: async () => { count++; return new Response(null, { status: 302, headers: { location } }); } });
+    await assert.rejects(invalid(UPDATE_SOURCES[0].url));
+    assert.equal(count, 1, 'unapproved destinations never receive a request');
+  }
 });
 
 test('network failures, invalid JSON, oversized and stalled bodies use bounded fallback', async () => {

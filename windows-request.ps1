@@ -13,7 +13,8 @@ try {
     $packet = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $uri = [Uri]$packet.url
     $updateUrls = @('https://gitee.com/un-important/dsh-openai-image/raw/main/latest.json', 'https://raw.githubusercontent.com/NL02040616/dsh-openai-image/main/latest.json')
-    $isUpdate = $updateUrls -ccontains [string]$packet.url
+    $isUpdateFile = $uri.Scheme -eq 'https' -and $uri.Host -eq 'raw.giteeusercontent.com' -and $uri.Port -eq 443 -and !$uri.UserInfo -and !$uri.Fragment -and $uri.AbsolutePath -ceq '/un-important/dsh-openai-image/raw/main/latest.json'
+    $isUpdate = ($updateUrls -ccontains [string]$packet.url) -or $isUpdateFile
     if ($isUpdate -and ($packet.method -cne 'GET' -or $packet.body -or @($packet.headers.PSObject.Properties | Where-Object { $_.Name -ine 'accept' }).Count -gt 0)) {
         throw 'Unsupported update request'
     }
@@ -73,7 +74,9 @@ try {
             if ($body.Length + $count -gt $limit) { throw 'RESPONSE_TOO_LARGE' }
             [void]$body.Append($buffer, 0, $count)
         }
-        @{ status = [int]$response.StatusCode; body = $body.ToString() } | ConvertTo-Json -Compress
+        $result = @{ status = [int]$response.StatusCode; body = $body.ToString() }
+        if ($isUpdate) { $result.location = $response.Headers['Location'] }
+        $result | ConvertTo-Json -Compress
     } finally { $reader.Dispose() }
 } catch {
     $errorCode = 'TRANSPORT'

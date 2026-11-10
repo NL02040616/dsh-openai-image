@@ -151,7 +151,7 @@ window.__ModuleLoader__.load({
   }
   return { kind, definition, info, images, versions };
 })();
-    const installedVersion = "1.7.0";
+    const installedVersion = "1.7.1";
     const createUpdateClient = function createUpdateClient({ currentVersion, fetcher, storage, now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout }) {
   const interval = 86400000, key = `dsh.openaiImage.updates.v1:${currentVersion}`;

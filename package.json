@@ -1,6 +1,6 @@
 {
   "name": "dsh-openai-image",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "type": "module",
   "description": "Image creation with recoverable requests, ordered references, retry actions, status cards and version comparison in DSH conversations.",

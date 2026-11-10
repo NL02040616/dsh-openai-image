@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "package": "dsh-openai-image",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "publishedAt": "2026-11-10",
-  "sha256": "685c3ed8a5f88f76a2690086e5c78da1250a0d1a1298a2d69331b2dd0b3b8659",
+  "sha256": "b1370f7df8174c15f5654ef17b05ac76a1965445ea10143dd6e5c772b88e8939",
   "dshVersions": [
     "0.2.2-rc.1"
   ],
@@ -11,12 +11,14 @@
     "zh": [
       "新增插件更新提醒：每天自动检查，优先 Gitee，GitHub 备用。",
       "画图按钮旁可查看新版本、更新说明和 DSH 兼容性，复制安装地址或忽略此版本。",
-      "提供手动检查和插件管理器入口；检查失败不影响生图，不自动安装。"
+      "提供手动检查和插件管理器入口；检查失败不影响生图，不自动安装。",
+      "修复 Gitee 文件域名签名跳转的兼容问题，Windows 系统代理通道已实测读取成功。"
     ],
     "en": [
       "Adds daily update checks with Gitee first and GitHub as fallback.",
       "Shows new versions, release notes and DSH compatibility beside Draw, with install links and an ignore option.",
-      "Includes manual checks and plugin manager navigation; failures do not block image creation, and updates are never installed automatically."
+      "Includes manual checks and plugin manager navigation; failures do not block image creation, and updates are never installed automatically.",
+      "Supports Gitee signed file redirects, verified with the Windows system proxy transport."
     ]
   }
 }
